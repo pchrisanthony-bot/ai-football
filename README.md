@@ -4,6 +4,8 @@ A 3D 5-a-side street football game that runs in the browser. It's played in a fl
 
 It draws on **FIFA Street (2012)** for skills, pannas, wall play and the style meter, and on **First Touch Soccer 15** for the broadcast camera and hold-to-power controls. Everything is built with Three.js: characters, animation, the venue, textures and audio are all procedural. No art or sound files are downloaded.
 
+**Play:** https://ai-football-flame.vercel.app. It works on desktop (keyboard or gamepad) and on phones (touch, landscape).
+
 ## Run it
 
 ```bash
@@ -49,6 +51,13 @@ Set a **PLAYER TAG** on the title screen. Finished matches and trick-shot drill 
 | Jockey · teammate press · rush keeper | Space · I (hold) · O (hold) | LT · X · Y |
 | AI debug overlay · pause | Tab · Esc | Back · Start |
 
+**On a phone:** turn it sideways, and the first tap goes full-screen.
+- **Moving:** drag anywhere on the left half for the joystick.
+- **Buttons on the right:** SHOOT (hold for power), PASS, THRU, LOB and SPRINT.
+- **SKILL:** tap for a stepover. Swipe ↑ for a rainbow, ↓ for a drag-back, or ←/→ for a stepover. Long-press near a defender for a panna.
+- **Defending:** the same buttons become SLIDE, SWITCH, TACKLE, PRESS and JOCKEY.
+- **Home screen:** "Add to Home Screen" installs it as a full-screen landscape app.
+
 **Shooting:** aim roughly at the goal and the stick picks the post (assisted). Aim anywhere else, such as at the cage, and the ball goes exactly where you point (manual). The dotted preview shows the path, including any rebound, and turns yellow when it's going in.
 
 Skills, pannas, wall passes and cage goals fill the **STYLE** meter. When it's full, **GAMEBREAKER** triggers: 20 seconds of boosted shots and a stunned keeper.
@@ -86,5 +95,8 @@ Compare this with `ChintanTrivedi/DeepGamingAI_FIFA` (see `PLAN.md`), which lear
 - **Cage walls** use the research-validated restitution e = 0.70 on the **normal** component of the ball's velocity, with light friction along the wall. A 30 m/s strike keeps about 84% of its pace through a bank. This is why the bank is a weapon.
 - **The AI aims banks in closed form.** For a rebound, tan θ′ = (e_t/e)·tan θ, which gives the bounce point exactly: L = d₁·tan θ + d₂·(e_t/e)·tan θ. The strike solver then refines the aim against the real integrator, so the AI's aim, the human's aim preview and the actual ball flight all come from the same physics.
 - **Graphics scale to the machine.** Quality auto-scales (LOW, MEDIUM, HIGH, ULTRA) from measured frame times, and you can set it manually under GRAPHICS in setup or pause.
+
+### Deploying
+The GitHub repo `pchrisanthony-bot/ai-football` is connected to the Vercel project `ai-football`. **Every push to `main` deploys to production automatically.** The two Supabase variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`) are set on the Vercel project.
 
 See `PLAN.md` for the research and design plan. The original 2D prototype is in `legacy/`.
