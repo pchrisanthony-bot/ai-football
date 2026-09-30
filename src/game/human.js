@@ -58,6 +58,7 @@ export class HumanController {
     if (p.jockey) p.move.speed *= 0.7;
 
     if (m.phase !== 'play') return;
+    if (inp.pressed('gamebreaker')) m.activateGB(this.team);   // G / L3·R3 / the GB button
     const canUseBall = mine || (!b.owner && m.ballReachableSoon(p, 1.6));
 
     // Double-tap PASS: the second tap lands while the first pass is winding up and dinks it.

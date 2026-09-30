@@ -10,6 +10,7 @@ const KEYMAP = {
   stepover: ['KeyQ'], roulette: ['KeyE'], dragback: ['KeyF'], rainbow: ['KeyR'], flickup: ['KeyU'],
   rush: ['KeyO'],
   panna: [],
+  gamebreaker: ['KeyG'],
   pause: ['Escape', 'KeyP'],
   debug: ['Tab'],
   confirm: ['Enter', 'NumpadEnter'],
@@ -19,7 +20,7 @@ const KEYMAP = {
 // Standard gamepad: 0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT, 8 Back, 9 Start, 12-15 dpad
 const PADMAP = {
   pass: [0], shoot: [1], lob: [2], through: [3], flair: [4], flickup: [5], control: [6], sprint: [7],
-  pause: [9], debug: [8], confirm: [0], rush: [3],
+  pause: [9], debug: [8], confirm: [0], rush: [3], gamebreaker: [10, 11],
 };
 
 export class Input {

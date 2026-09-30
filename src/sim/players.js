@@ -48,11 +48,12 @@ export function makePlayer(teamIdx, slot, teamDef, seedSkin) {
     move: { x: 0, z: 0, speed: 0 },   // desired movement this tick (from human or AI)
     faceTarget: null,                  // optional point to face (jockey, close control, set)
     stamina: 1, sprinting: false,
+    st: { g: 0, sh: 0, sk: 0, tk: 0, sv: 0 },   // match stats: goals, shots, skills, tackles won, saves
     human: false, active: true,
     action: null,                      // current timed action (kick, tackle, skill, dive, …)
     stun: 0, noTouch: 0, possessT: 0, closeControl: false, jockey: false,
     dribble: { f: 0.45, u: 0, lat: 0, mode: 'slot', lastT: -9 },
-    ai: { state: 'IDLE', pending: null, pendingT: 0, thinkT: Math.random() * 0.2, label: '', why: '', target: null, commitT: 0 },
+    ai: { state: 'IDLE', pending: null, pendingT: 0, thinkT: ((slot * 0.037 + teamIdx * 0.09) % 0.2), label: '', why: '', target: null, commitT: 0 },
   };
 }
 

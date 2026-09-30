@@ -16,7 +16,7 @@ import { TouchControls, isTouchDevice } from './input/touch.js';
 import { HumanController } from './game/human.js';
 import { Audio } from './audio/audio.js';
 import { HUD } from './ui/hud.js';
-import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel } from './ui/menus.js';
+import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel, lineupsPanel } from './ui/menus.js';
 import { TEAMS } from './sim/players.js';
 import { DRILL_VARIANTS, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
@@ -135,21 +135,46 @@ function toSetup(spectate = false) {
     { label: 'MATCH', options: MODES, value: settings.mode, onChange: v => settings.mode = v },
     { label: 'AI LEVEL', options: DIFFS, value: settings.diff, onChange: v => settings.diff = v },
     { label: 'GRAPHICS', options: GFX, value: settings.gfx, onChange: v => { settings.gfx = v; applyGfx(); } },
-    { label: spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: () => startMatch() },
+    { label: spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: () => toLineups() },
     { label: 'BACK', action: toTitle },
   ];
   G.menu = new Menu(scr, { cls: 'center', title: spectate ? 'WATCH AI' : 'MATCH SETUP', subtitle: spectate ? 'AI VS AI · DEBUG OVERLAY ON' : 'ROOFTOP CAGE · NIGHT', items });
   G.menu.onNav = nav;
 }
 
-function startMatch() {
-  clearScreens();
+function newMatch() {
   if (settings.home === settings.away) settings.away = (settings.away + 1) % TEAM_IDS.length;
   const md = MODES[settings.mode];
-  startMatchObject({
+  return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
     difficulty: DIFFS[settings.diff].v, seed: Math.floor(Math.random() * 1e6),
   }, G.spectate ? null : 0);
+}
+
+// Pre-match line-ups (FTS style): both squads, archetypes, ratings, kits.
+function toLineups() {
+  clearScreens();
+  const m = newMatch();
+  hud.hide();
+  G.state = 'lineups'; G.stateT = 0;
+  const scr = addScreen('screen dim');
+  const panel = lineupsPanel(m, `ROOFTOP CAGE · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
+  G.menu = new Menu(scr, {
+    cls: 'center wide', title: G.spectate ? 'WATCH AI' : 'LINE-UPS', subtitle: `${m.teams[0].def.name}  vs  ${m.teams[1].def.name}`,
+    items: [{ label: G.spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: beginMatch }, { label: 'BACK', action: () => toSetup(G.spectate) }], side: panel,
+  });
+  G.menu.onNav = nav;
+  G.menu.el.insertBefore(panel, G.menu.list);
+}
+
+function startMatch() {
+  clearScreens();
+  newMatch();
+  beginMatch();
+}
+
+function beginMatch() {
+  clearScreens();
   hud.show();
   hud.setDebug(G.spectate);
   hud.setSpectate(G.spectate);
@@ -374,6 +399,12 @@ function tick(dt) {
       if (input.pressed('pause') && G.state !== 'title' && G.state !== 'tag') { audio.uiBack(); toTitle(); }
       break;
     }
+    case 'lineups':
+      rig.orbit(dt, { x: 0, z: 0 }, G.t * 0.6, 13, 5.5);
+      G.mview.update(dt, null);
+      G.menu?.handle(input);
+      if (input.pressed('pause')) { audio.uiBack(); toSetup(G.spectate); }
+      break;
     case 'intro': {
       const u = Math.min(1, G.stateT / 2.4);
       rig.intro(dt, 1 - Math.pow(1 - u, 3));
@@ -390,8 +421,11 @@ function tick(dt) {
         if (G.drill) { leaveDrill(); toTitle(); break; }
         toPause(); break;
       }
-      G.human?.update(dt);
-      const events = stepMatch(dt, false);
+      // GAMEBREAKER slow motion: the sim runs slow, the camera and UI don't.
+      G.slow = Math.max(0, (G.slow || 0) - dt);
+      const simDt = G.slow > 0 ? dt * 0.28 : dt;
+      G.human?.update(simDt);
+      const events = stepMatch(simDt, false);
       if (G.drill) drillTick(dt, events);
       rig.broadcast(dt, m.ball, m.human, spread(m));
       if (m.phase === 'fulltime' && !G.drill) toFullTime();
@@ -442,17 +476,18 @@ function tick(dt) {
       const o = m.ball.owner;
       const attack = o ? o.team === m.human.team : Math.hypot(m.ball.x - m.human.x, m.ball.z - m.human.z) < 3;
       input.touch.setMode(attack);
+      input.touch.setGB(m.teams[m.human.team].gbReady);
       input.touch.setContext(attack ? (G.human.pannaReady() ? 'panna' : null) : 'jockey');
       const c = G.human.charge;
       input.touch.setCharge(c && c.t > 0.08 ? c.kind : null, G.human.chargeLevel());
     }
   }
-  rig.zoomBias = innerHeight < 520 ? -3 : 0;
+  rig.zoomBias = (innerHeight < 520 ? -3 : 0) - (G.slow > 0 && G.state === 'match' ? 4 : 0);
 
   venue.update(G.t, R.camera);
   fx.update(dt);
   rig.apply(dt);
-  if (G.match && !['title', 'setup', 'controls', 'boards', 'tag'].includes(G.state)) hud.update(dt, G.human);
+  if (G.match && !['title', 'setup', 'controls', 'boards', 'tag', 'lineups'].includes(G.state)) hud.update(dt, G.human);
   R.composer.render();
 }
 
@@ -477,6 +512,8 @@ function stepMatch(dt, quiet) {
   }
   G.mview.handleEvents(events, hud);
   for (const e of events) {
+    if (e.type === 'gamebreaker') G.slow = 0.55;
+    if (e.type === 'gbStrike') G.slow = 0.75;
     if (e.type === 'goal') hud.goal(e, m);
     if (e.type === 'goalDone') {
       if (G.mview.startReplay()) { G.state = 'replay'; G.stateT = 0; hud.setReplay(true); }

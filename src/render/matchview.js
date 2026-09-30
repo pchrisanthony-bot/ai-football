@@ -214,6 +214,8 @@ export class MatchView {
         case 'style': hud.style(e.label, e.pts, m.teams[e.team].def.kit.shirt); audio.style(e.pts); break;
         case 'panna': audio.crowdOoh(1.2); break;
         case 'gamebreaker': audio.gamebreaker(); hud.gamebreaker(e.team); rig.shake(0.3, 0.6); break;
+        case 'gbReady': audio.gbReady(); hud.callout(m.opts.humanTeam === e.team ? 'GAMEBREAKER READY' : 'THEY HAVE A GAMEBREAKER', '#FFD400', 1.4); break;
+        case 'gbStrike': audio.gbStrike(); rig.shake(0.2, 0.5); break;
         case 'whistle': audio.whistle(e.kind === 'end'); break;
         case 'goal': {
           audio.goal();

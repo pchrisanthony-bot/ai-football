@@ -2,6 +2,7 @@
 // controlled-player tag with power + stamina, radar, and the AI debug overlay.
 import * as THREE from 'three';
 import { COURT, STYLE } from '../config.js';
+import { crest } from './crest.js';
 
 const h = (tag, cls, html = '') => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -21,11 +22,13 @@ export class HUD {
     this.root.innerHTML = '';
     this.root.classList.remove('hidden');
     const mode = { timed: 'TIMED', firstto: `FIRST TO ${match.opts.firstTo}`, lms: 'LAST MAN STANDING', drill: 'TRICK-SHOT DRILL' }[match.opts.mode] || '';
+    // Broadcast score bug (FTS layout): crest · TLA | score | TLA · crest | clock.
     this.bug = h('div', 'bug', `
-      <div class="bug-logo">SC</div>
+      <div class="bug-crest">${crest(A.def, 22)}</div>
       <div class="bug-team" style="--c:${A.def.kit.shirt}"><span>${A.def.short}</span></div>
-      <div class="bug-score"><b class="s0">0</b><i>–</i><b class="s1">0</b></div>
-      <div class="bug-team" style="--c:${B.def.kit.shirt}"><span>${B.def.short}</span></div>
+      <div class="bug-score"><b class="s0">0</b><i>-</i><b class="s1">0</b></div>
+      <div class="bug-team away" style="--c:${B.def.kit.shirt}"><span>${B.def.short}</span></div>
+      <div class="bug-crest">${crest(B.def, 22)}</div>
       <div class="bug-clock">0:00</div>
       <div class="bug-mode">${mode}</div>`);
     this.root.appendChild(this.bug);
@@ -40,7 +43,9 @@ export class HUD {
     this.center = h('div', 'callout');
     this.feed = h('div', 'feed');
     this.banner = h('div', 'banner');
-    this.replayTag = h('div', 'replay-tag hidden', '<span class="rec"></span>REPLAY <small>press any key to skip</small>');
+    this.replayTag = h('div', 'replay-tag hidden', '<span class="r-badge">R</span><small>tap / any key to skip</small>');
+    this.letterbox = h('div', 'letterbox', '<i></i><i></i>');
+    this.l3 = h('div', 'l3');
     this.tag = h('div', 'ptag hidden', '<div class="ptag-name"></div><div class="ptag-power"><div></div></div><div class="ptag-stam"><div></div></div>');
     this.tagName = this.tag.querySelector('.ptag-name'); this.tagPow = this.tag.querySelector('.ptag-power'); this.tagPowFill = this.tagPow.firstChild; this.tagStam = this.tag.querySelector('.ptag-stam div');
     this.flashEl = h('div', 'flash');
@@ -48,7 +53,7 @@ export class HUD {
     this.dbg = h('div', 'dbg');
     this.dbgLegend = h('div', 'dbg-legend hidden', `<b>AI DEBUG</b> — each tag is one autonomous agent: <i>STATE</i> · chosen action · top utility scores. <kbd>Tab</kbd> to hide`);
     this.hint = h('div', 'hint', '<kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>J</kbd> pass <kbd>K</kbd> shoot (hold) <kbd>L</kbd> through <kbd>I</kbd> lob <kbd>Space</kbd> close control <kbd>Q E F R U</kbd> skills <kbd>Tab</kbd> AI view <kbd>Esc</kbd> pause');
-    this.root.append(this.center, this.feed, this.banner, this.replayTag, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.hint);
+    this.root.append(this.letterbox, this.center, this.feed, this.banner, this.replayTag, this.l3, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.hint);
     this.labels.clear();
     this.setDebug(this.debug);
     this.lastScore = [0, 0];
@@ -101,6 +106,10 @@ export class HUD {
   goal(info, match) {
     const T = match.teams[info.team];
     const scorer = match.players.find(p => p.id === info.scorer);
+    // Queue the broadcast lower-third for the replay: "GOAL! – Reyes 1:23".
+    const at = fmt(match.elapsed());
+    const what = info.own ? 'OWN GOAL' : info.cage ? 'CAGE GOAL!' : 'GOAL!';
+    this.pendingL3 = { def: T.def, top: T.def.name, bot: scorer ? `${what} – ${scorer.name} <span>${at}</span>${!info.own && scorer.st.g > 1 ? ` <em>${scorer.st.g} GOALS</em>` : ''}` : `${what} <span>${at}</span>` };
     const title = info.cage ? 'CAGE GOAL!' : info.own ? 'OWN GOAL' : 'GOAL!';
     const sub = scorer ? `${scorer.name.toUpperCase()} <span>#${scorer.number}</span>${info.cage ? ` · off the mesh${info.wallHits > 1 ? ' ×' + info.wallHits : ''}` : ''}` : '';
     this.banner.innerHTML = `<div class="goal ${info.cage ? 'cage' : ''}" style="--c:${T.def.kit.shirt}"><div class="goal-t">${title}</div><div class="goal-s">${sub}</div></div>`;
@@ -118,8 +127,19 @@ export class HUD {
 
   setReplay(on) {
     this.replayTag.classList.toggle('hidden', !on);
+    this.letterbox.classList.toggle('on', on);
     this.inReplay = on;
-    for (const el of [this.dbg, this.dbgLegend, this.radar, this.tag, this.hint]) el?.classList.toggle('replay-hide', on);
+    for (const el of [this.dbg, this.dbgLegend, this.radar, this.tag, this.hint, this.bug, ...this.meters.map(x => x.el)]) el?.classList.toggle('replay-hide', on);
+    if (on && this.pendingL3) { const l = this.pendingL3; this.pendingL3 = null; setTimeout(() => this.lowerThird(l.def, l.top, l.bot, 3200), 500); }
+    if (!on) this.l3.classList.remove('show');
+  }
+
+  // FTS-style lower-third: crest badge, team bar, info bar.
+  lowerThird(def, top, bot, ms = 3000) {
+    this.l3.innerHTML = `<div class="l3-crest">${crest(def, 44)}</div><div class="l3-bars"><div class="l3-top" style="--c:${def.kit.shirt}">${top}</div><div class="l3-bot">${bot}</div></div>`;
+    this.l3.classList.remove('show'); void this.l3.offsetWidth; this.l3.classList.add('show');
+    clearTimeout(this._l3T);
+    this._l3T = setTimeout(() => this.l3.classList.remove('show'), ms);
   }
   setSpectate(on) { this.hint?.classList.toggle('hidden', on); }
 
@@ -133,12 +153,15 @@ export class HUD {
     this.clock.textContent = m.opts.mode === 'timed' ? fmt(Math.max(0, m.clock)) : fmt(m.opts.seconds - m.clock);
     this.clock.classList.toggle('late', m.opts.mode === 'timed' && m.clock < 15 && m.phase === 'play');
 
+    const touch = document.documentElement.classList.contains('is-touch');
     m.teams.forEach((T, i) => {
       const mt = this.meters[i];
-      const gb = T.gb > 0;
+      const gb = T.gb > 0, ready = T.gbReady;
       mt.fill.style.width = `${gb ? (T.gb / STYLE.gamebreakerSecs) * 100 : (T.style / STYLE.meterMax) * 100}%`;
       mt.el.classList.toggle('gb-on', gb);
-      mt.label.textContent = gb ? `GAMEBREAKER ${Math.ceil(T.gb)}` : 'STYLE';
+      mt.el.classList.toggle('gb-ready', ready);
+      const yours = m.opts.humanTeam === i;
+      mt.label.textContent = gb ? `GAMEBREAKER ${Math.ceil(T.gb)}` : ready ? (yours ? (touch ? 'GAMEBREAKER READY · TAP GB' : 'GAMEBREAKER READY · PRESS G') : 'GAMEBREAKER READY') : 'STYLE';
     });
 
     // controlled player tag

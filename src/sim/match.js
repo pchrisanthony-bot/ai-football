@@ -48,7 +48,7 @@ export class Match {
     this.rng = mulberry32(this.opts.seed);
     const defs = [TEAMS[this.opts.home], TEAMS[this.opts.away]];
     this.teams = defs.map((def, i) => ({
-      idx: i, def, dir: i === 0 ? 1 : -1, score: 0, style: 0, gb: 0,
+      idx: i, def, dir: i === 0 ? 1 : -1, score: 0, style: 0, gb: 0, gbReady: false,
       stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0 },
     }));
     this.players = [];
@@ -63,6 +63,7 @@ export class Match {
     this.phaseT = 0;
     this.events = [];
     this.goalInfo = null;
+    this.goalLog = [];               // { team, scorer, name, own, cage, at } — for the lower-thirds and full-time sheet
     this.human = null;
     this.ai = new AIDirector(this);
     this.kickoff(0);
@@ -70,7 +71,14 @@ export class Match {
 
   // ------------------------------------------------------------------ helpers
   rand() { return this.rng(); }
-  emit(e) { e.time = this.time; this.events.push(e); }
+  emit(e) {
+    e.time = this.time;
+    // Per-player match stats (full-time sheet / man of the match).
+    if ((e.type === 'tackle' && e.ok) || e.type === 'save') { const q = this.players.find(p => p.id === e.pid); if (q) q.st[e.type === 'save' ? 'sv' : 'tk']++; }
+    this.events.push(e);
+  }
+  // Elapsed match time in seconds (the clock counts down in timed mode, up otherwise).
+  elapsed() { return this.opts.mode === 'timed' ? this.opts.seconds - Math.max(0, this.clock) : this.opts.seconds - this.clock; }
   drainEvents() { const e = this.events; this.events = []; return e; }
   teamPlayers(t) { return this.players.filter(p => p.team === t && p.active); }
   opponents(p) { return this.players.filter(q => q.team !== p.team && q.active); }
@@ -172,6 +180,18 @@ export class Match {
     this.ball.owner = null;
     this.emit({ type: 'whistle', kind: 'end' });
     this.emit({ type: 'fulltime' });
+  }
+
+  // Man of the match: goals first, then the rest of a good game; the winners get a nudge.
+  manOfTheMatch() {
+    const w = this.winner();
+    let best = null, bs = -1;
+    for (const p of this.players) {
+      const st = p.st;
+      const sc = st.g * 4 + st.sh * 0.4 + st.sk * 0.35 + st.tk * 0.7 + st.sv * 1.1 + (p.team === w ? 1.5 : 0);
+      if (sc > bs) { bs = sc; best = p; }
+    }
+    return best;
   }
 
   winner() {
@@ -488,7 +508,7 @@ export class Match {
       reach = 0.3 + 0.12 * ext; maxH = a.high ? 2.5 : 1.4;
     }
     if (bodyDist > reach || b.y > maxH) return false;
-    const keeping = p.attrs.keeping * (this.isGB(1 - p.team) ? 0.8 : 1);
+    const keeping = p.attrs.keeping * (this.isGB(1 - p.team) ? 0.72 : 1);   // a GAMEBREAKER strike is hard to hold
     // Fast balls get parried, not held; rebounds off the cage are harder to hold still.
     const redirected = b.redirectT && this.time - b.redirectT < 1.2;
     const catchMax = 9 + 11 * keeping - (a?.type === 'dive' ? 4 : 0) - (redirected ? 3 : 0);
@@ -529,6 +549,8 @@ export class Match {
     const T = this.teams[scoringTeam];
     T.score++;
     if (cage) T.stats.cageGoals++;
+    if (scorer && !own) scorer.st.g++;
+    this.goalLog.push({ team: scoringTeam, scorer: scorer ? scorer.id : -1, name: scorer ? scorer.name : '', own, cage, at: this.elapsed() });
     this.addStyle(scoringTeam, cage ? STYLE.points.cagegoal : STYLE.points.goal, null, scorer);
     this.goalInfo = { team: scoringTeam, scorer, own, cage, wallHits: b.wallHits, t: this.time, done: false, gamebreaker: this.isGB(scoringTeam) };
     this.loseBall();
@@ -567,15 +589,26 @@ export class Match {
   }
 
   // ------------------------------------------------------------------ style & GAMEBREAKER
+  // Style fills the meter; a full meter is a GAMEBREAKER in the bank. Like FIFA
+  // Street, the player chooses the moment to fire it (activateGB) — it never
+  // triggers on its own, and it's a boost, not a win button.
   addStyle(team, pts, label, p) {
     const T = this.teams[team];
     if (label) this.emit({ type: 'style', team, pts, label, pid: p ? p.id : -1 });
-    if (T.gb > 0) return;
+    if (T.gb > 0 || T.gbReady) return;
     T.style = Math.min(STYLE.meterMax, T.style + pts);
     if (T.style >= STYLE.meterMax) {
-      T.style = 0; T.gb = STYLE.gamebreakerSecs;
-      this.emit({ type: 'gamebreaker', team });
+      T.gbReady = true;
+      this.emit({ type: 'gbReady', team });
     }
+  }
+
+  activateGB(team) {
+    const T = this.teams[team];
+    if (!T.gbReady || T.gb > 0 || this.phase !== 'play') return false;
+    T.gbReady = false; T.style = 0; T.gb = STYLE.gamebreakerSecs;
+    this.emit({ type: 'gamebreaker', team });
+    return true;
   }
 
   // ------------------------------------------------------------------ actions
@@ -695,7 +728,7 @@ export class Match {
       const ang = noise(e), c = Math.cos(ang), s = Math.sin(ang);
       const vx = v.vx * c - v.vz * s, vz = v.vx * s + v.vz * c;
       v.vx = vx; v.vz = vz; v.vy += noise(e * 12) + (manual ? 0 : Math.max(0, a.aim.power - 0.92) * 3);
-      T.stats.shots++;
+      T.stats.shots++; p.st.sh++;
     } else if (a.type === 'throw') {
       const d = Math.hypot(a.target.x - b.x, a.target.z - b.z) || 1;
       const s = groundPassSpeed(d, 5);
@@ -740,6 +773,8 @@ export class Match {
     if (a.type === 'shot' || a.type === 'volley') {
       const onT = predictPath(b, 3, 1 / 60).goal === T.dir;
       if (onT) T.stats.onTarget++;
+      // A GAMEBREAKER strike gets the slow-motion treatment (it can still be saved).
+      if (this.isGB(p.team)) this.emit({ type: 'gbStrike', pid: p.id, team: p.team, x: b.x, z: b.z, onTarget: onT });
       if (a.aim.finesse) this.addStyle(p.team, STYLE.points.finesse, null, p);
     }
     this.emit({ type: 'kick', pid: p.id, kind: a.type, speed, x: b.x, y: b.y, z: b.z, finesse: !!a.aim?.finesse, flair: !!a.flair });
@@ -775,7 +810,7 @@ export class Match {
     const gb = this.isGB(p.team);
     const gx = this.oppGoalX(p.team);
     const power = clamp(aim.power, 0, 1);
-    let speed = (KICK.shotMin + (KICK.shotMax - KICK.shotMin) * power) * (0.86 + 0.16 * p.attrs.shot) * (gb ? 1.12 : 1);
+    let speed = (KICK.shotMin + (KICK.shotMax - KICK.shotMin) * power) * (0.86 + 0.16 * p.attrs.shot) * (gb ? 1.15 : 1);
     const start = { x: b.x, y: Math.max(b.y, R), z: b.z };
 
     if (aim.mode === 'manual') {
@@ -894,7 +929,7 @@ export class Match {
   // ------------------------------------------------------------------ skills
   skillDone(p, name) {
     const pts = STYLE.points[name] || 20;
-    this.teams[p.team].stats.skills++;
+    this.teams[p.team].stats.skills++; p.st.sk++;
     this.addStyle(p.team, pts, SKILL_NAMES[name], p);
   }
 

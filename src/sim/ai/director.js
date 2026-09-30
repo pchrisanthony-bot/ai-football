@@ -45,7 +45,7 @@ export class AIDirector {
       ai.thinkT -= dt;
       if (ai.pending && (ai.pendingT -= dt) <= 0) { ai.state = ai.pending; ai.pending = null; }
       if (ai.thinkT <= 0) {
-        ai.thinkT = AI.thinkInterval * (0.85 + Math.random() * 0.3);
+        ai.thinkT = AI.thinkInterval * (0.85 + this.m.rand() * 0.3);
         this.think(p);
       }
       this.act(p, dt);
@@ -58,6 +58,8 @@ export class AIDirector {
     T.phase = o ? (o.team === t ? 'ATTACK' : 'DEFEND') : 'LOOSE';
     const mates = m.teamPlayers(t);
     const dir = m.teams[t].dir;
+    // An AI side fires its GAMEBREAKER when it has the ball in the attacking half.
+    if (m.teams[t].gbReady && m.opts.humanTeam !== t && o && o.team === t && o.role !== 'GK' && o.x * dir > 1) m.activateGB(t);
 
     // Shape anchors: base futsal diamond, shifted by phase and by the ball.
     const bu = (b.x * dir + COURT.halfL) / (2 * COURT.halfL);
@@ -122,10 +124,10 @@ export class AIDirector {
         if (p === o || p.role === 'GK' || p.role === 'DEF') continue;
         const ahead = (p.x - o.x) * dir;
         if (ahead < -2) continue;
-        const s = threat(m, t, p.x + dir * 4, p.z) - Math.max(0, 6 - ahead) * 0.01 + Math.random() * 0.05;
+        const s = threat(m, t, p.x + dir * 4, p.z) - Math.max(0, 6 - ahead) * 0.01 + this.m.rand() * 0.05;
         if (s > bs) { bs = s; best = p; }
       }
-      if (best && o.possessT > 0.4 && Math.random() < 0.55 + 0.3 * this.diff) T.runners.add(best);
+      if (best && o.possessT > 0.4 && this.m.rand() < 0.55 + 0.3 * this.diff) T.runners.add(best);
     }
   }
 
@@ -149,7 +151,7 @@ export class AIDirector {
     const ai = p.ai;
     if (ai.state === s) { ai.pending = null; return; }
     if (immediate) { ai.state = s; ai.pending = null; return; }
-    if (ai.pending !== s) { ai.pending = s; ai.pendingT = this.reaction() * (0.7 + Math.random() * 0.6); }
+    if (ai.pending !== s) { ai.pending = s; ai.pendingT = this.reaction() * (0.7 + this.m.rand() * 0.6); }
   }
 
   // ------------------------------------------------------------------ player FSM
@@ -251,7 +253,7 @@ export class AIDirector {
 
     // Decision noise scales with difficulty (lower difficulty = sloppier choices).
     const noise = 0.1 * (1 - this.diff);
-    for (const o of opts) o.score = o.u + (Math.random() - 0.5) * 2 * noise;
+    for (const o of opts) o.score = o.u + (this.m.rand() - 0.5) * 2 * noise;
     opts.sort((a, c) => c.score - a.score);
     ai.options = opts.slice(0, 4).map(o => ({ label: o.label, u: +o.u.toFixed(2) }));
     const best = opts[0];
@@ -270,7 +272,9 @@ export class AIDirector {
       case 'shoot': {
         const aim = best.bank
           ? { mode: 'assist', bank: true, angle: best.angle, tz: best.tz, ty: 0.4, power: 0.85 + 0.12 * this.diff }
-          : { mode: 'assist', tz: best.tz, ty: 0.4 + Math.random() * 0.8, power: 0.8 + 0.18 * this.diff, finesse: p.attrs.shot > 0.9 && Math.random() < 0.3 && Math.abs(best.tz) > 1 };
+          : m.isGB(p.team)
+            ? { mode: 'assist', tz: Math.sign(best.tz || 1) * 1.2, ty: 0.5 + this.m.rand() * 0.9, power: 0.95 }   // GAMEBREAKER: into the corner
+            : { mode: 'assist', tz: best.tz, ty: 0.4 + this.m.rand() * 0.8, power: 0.8 + 0.18 * this.diff, finesse: p.attrs.shot > 0.9 && this.m.rand() < 0.3 && Math.abs(best.tz) > 1 };
         if (m.requestShot(p, aim)) ai.pop = { text: best.label, t: 1.2 };
         break;
       }
@@ -281,7 +285,7 @@ export class AIDirector {
         if (m.requestKick(p, 'pass', { receiver: best.r, angle: best.angle, speed: best.speed })) ai.pop = { text: 'WALL PASS', t: 1.2 };
         break;
       case 'skill':
-        if (m.requestSkill(p, best.name, Math.random() - 0.5, Math.random() - 0.5)) { ai.skillCD = 2.2 + Math.random() * 2; ai.pop = { text: best.label, t: 1 }; }
+        if (m.requestSkill(p, best.name, this.m.rand() - 0.5, this.m.rand() - 0.5)) { ai.skillCD = 2.2 + this.m.rand() * 2; ai.pop = { text: best.label, t: 1 }; }
         break;
       case 'shield':
         p.closeControl = true;
@@ -366,11 +370,11 @@ export class AIDirector {
         const exposed = Math.hypot(b.x - o.x, b.z - o.z) > 0.62;
         if ((bd < 1.25 || (dist < 1.3 && ai.pressT > 1.2)) && !p.action && p.stun <= 0) {
           const rate = (exposed ? 3.5 : 0.8) * (0.4 + 0.9 * d) * (1 + Math.max(0, ai.pressT - 1));
-          if (Math.random() < rate * dt) m.requestTackle(p);
+          if (this.m.rand() < rate * dt) m.requestTackle(p);
         }
         // Last-ditch slide when the carrier is getting away toward goal.
         const away = Math.hypot(o.x - g.x, o.z) < Math.hypot(p.x - g.x, p.z);
-        if (away && bd < 2.4 && bd > 1.2 && o.speed > 4 && !p.action && Math.random() < 0.9 * d * dt * p.attrs.tackle) {
+        if (away && bd < 2.4 && bd > 1.2 && o.speed > 4 && !p.action && this.m.rand() < 0.9 * d * dt * p.attrs.tackle) {
           p.facing = p.heading = Math.atan2(b.z + b.vz * 0.2 - p.z, b.x + b.vx * 0.2 - p.x);
           m.requestSlide(p);
         }
@@ -429,7 +433,7 @@ export class AIDirector {
           else m.requestKick(p, 'pass', { receiver: passes[0].r });
           ai.pop = { text: 'DISTRIBUTE', t: 1 };
         } else if (p.possessT > 1.8) {
-          m.requestKick(p, 'clear', { target: { x: dir * 6, z: (Math.random() - 0.5) * 12 } });
+          m.requestKick(p, 'clear', { target: { x: dir * 6, z: (this.m.rand() - 0.5) * 12 } });
           ai.pop = { text: 'CLEAR', t: 1 };
         }
       }
@@ -521,7 +525,9 @@ export class AIDirector {
     // Deflections and cage rebounds are notoriously hard for keepers: he's already
     // moving for the original line, so the re-read costs an extra beat.
     const redirected = (b.redirectT || -1) > (kick ? kick.t : -1);
-    const react = 0.1 + 0.18 * (1 - this.diff) + (1 - p.attrs.keeping) * 0.12 + (m.isGB(1 - p.team) ? 0.14 : 0) + (redirected ? 0.2 : 0);
+    // A GAMEBREAKER strike leaves the keeper a beat late and heavy-footed.
+    const gbShot = m.isGB(1 - p.team) && kick && kick.team !== p.team;
+    const react = 0.1 + 0.18 * (1 - this.diff) + (1 - p.attrs.keeping) * 0.12 + (gbShot ? 0.07 : 0) + (redirected ? 0.2 : 0);
     const since = m.time - (t0 > 0 ? t0 : m.time);
     ai.label = 'SET';
     if (since < react) { this.stop(p); return true; }
@@ -550,7 +556,7 @@ export class AIDirector {
       ai.diveFor = key;
       // Caught still moving across: the push-off is weaker.
       const planted = p.speed < 1.2 ? 1 : 0.88;
-      m.requestDive(p, p.x - dir * 0.1, readZ + Math.sign(lateral) * 0.25, cross.y > 1.1, (redirected ? 0.8 : 1) * planted);
+      m.requestDive(p, p.x - dir * 0.1, readZ + Math.sign(lateral) * 0.25, cross.y > 1.1, (redirected ? 0.8 : 1) * planted * (gbShot ? 0.86 : 1));
       ai.state = 'DIVE'; ai.label = 'DIVE';
       return true;
     }

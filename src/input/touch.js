@@ -65,7 +65,8 @@ export class TouchControls {
       <div class="t-pause">❚❚</div>
       <div class="t-reset hidden">↺</div>
       ${SLOTS.map(s => btn(s.cls, s.key)).join('')}
-      ${btn('tb-ctx', 'ctx')}`;
+      ${btn('tb-ctx', 'ctx')}
+      <div class="tb tb-gb"><b class="tb-l">GB</b><small class="tb-s">GAMEBREAKER</small></div>`;
     root.appendChild(el);
     this.zone = el.querySelector('.t-stickzone');
     this.stickEl = el.querySelector('.t-stick');
@@ -78,6 +79,8 @@ export class TouchControls {
     this.bindStick();
     for (const s of SLOTS) this.bindSlot(this.btns[s.key], () => this.attack ? s.atk : s.def);
     this.bindSlot(this.ctxEl, () => CONTEXT[this.context]);
+    this.gbEl = el.querySelector('.tb-gb');
+    this.gbEl.addEventListener('pointerdown', e => { e.preventDefault(); this.pulse.add('gamebreaker'); navigator.vibrate?.([10, 30, 20]); });
     el.querySelector('.t-pause').addEventListener('pointerdown', e => { e.preventDefault(); this.pulse.add('pause'); });
     this.resetEl.addEventListener('pointerdown', e => { e.preventDefault(); this.pulse.add('drill'); });
     this.relabel();
@@ -226,6 +229,9 @@ export class TouchControls {
       this.ctxEl.querySelector('.tb-s').textContent = c.sub;
     }
   }
+
+  // The GAMEBREAKER button shows while one is banked.
+  setGB(ready) { this.gbEl.classList.toggle('show', !!ready); }
 
   // Power ring on the button being charged (kind: 'shoot' | 'pass' | 'through' | null).
   setCharge(kind, level) {

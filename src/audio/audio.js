@@ -113,6 +113,13 @@ export class Audio {
   ui() { this.tone(880, 0.06, 0.08, 'triangle'); }
   uiBack() { this.tone(520, 0.08, 0.08, 'triangle'); }
   style(pts) { this.tone(660, 0.1, 0.1, 'square', null, 0); this.tone(990, 0.14, 0.09, 'square', null, 0.07); if (pts >= 250) this.tone(1320, 0.2, 0.09, 'square', null, 0.14); }
+  gbStrike() {
+    // Slow-motion strike: a sub drop under a reversed-air whoosh.
+    this.tone(70, 1.1, 0.55, 'sine', 32);
+    this.burst('bandpass', 300, 1.2, 0.8, 0.22, 0, 3200);
+    this.tone(1760, 0.5, 0.05, 'triangle', 880, 0.05);
+  }
+  gbReady() { [660, 880, 1320].forEach((f, i) => this.tone(f, 0.16, 0.08, 'square', null, i * 0.07)); }
   gamebreaker() { [220, 277, 330, 440].forEach((f, i) => this.tone(f, 0.6, 0.12, 'sawtooth', f * 2, i * 0.06)); this.crowdRoar(0.8, 2); }
 
   // ------------------------------------------------------------ crowd
