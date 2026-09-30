@@ -1,7 +1,8 @@
 // The venue: a floodlit rooftop cage at night, city all around.
 import * as THREE from 'three';
 import { COURT } from '../config.js';
-import { courtTextures, chainLink, netTexture, graffitiBoard, concreteTexture, radialTexture, bannerTexture, sprayTag } from './textures.js';
+import { courtTextures, chainLink, netTexture, graffitiBoard, concreteTexture, radialTexture, bannerTexture, sprayTag, turfTextures, adBoard } from './textures.js';
+import { buildStands, towerHead } from './stadium.js';
 
 const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH } = COURT;
 
@@ -46,8 +47,12 @@ class Ripples {
   update(t) { this.U.uTime.value = t; }
 }
 
-export function buildVenue(scene, renderer) {
-  const venue = { fence: new Ripples(), nets: new Ripples(), nearFade: [], lights: [], animated: [] };
+// kind: 'rooftop' (the night rooftop cage) or 'arena' (a floodlit stadium cage with
+// turf, stands and a crowd — the FTS 15 look). Builds into `scene` (a Group) and
+// hands back its fog separately so venues can be swapped.
+export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
+  const arena = kind === 'arena';
+  const venue = { kind, fence: new Ripples(), nets: new Ripples(), nearFade: [], lights: [], animated: [] };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
 
   // ---------------------------------------------------------------- sky
@@ -79,10 +84,10 @@ export function buildVenue(scene, renderer) {
   moon.position.set(-260, 260, -520); moon.scale.set(60, 60, 1);
   scene.add(moon);
 
-  scene.fog = new THREE.FogExp2(0x0b0d1a, 0.0065);
+  venue.fog = new THREE.FogExp2(arena ? 0x121622 : 0x0b0d1a, arena ? 0.0038 : 0.0065);
 
   // ---------------------------------------------------------------- lights
-  scene.add(new THREE.HemisphereLight(0x3a4a7a, 0x121216, 0.55));
+  scene.add(new THREE.HemisphereLight(0x3a4a7a, arena ? 0x1a2a16 : 0x121216, arena ? 0.7 : 0.55));
   const moonLight = new THREE.DirectionalLight(0x8fa6ff, 0.35);
   moonLight.position.set(-30, 60, -40);
   scene.add(moonLight);
@@ -94,33 +99,37 @@ export function buildVenue(scene, renderer) {
   venue.flicker = null;
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     // The far-right mast has a dying lamp: it buzzes and stutters now and then.
-    const dying = sx === 1 && sz === -1;
+    const dying = !arena && sx === 1 && sz === -1;
     const lm = dying ? lampMat.clone() : lampMat;
-    const bx = sx * (halfL + 3.2), bz = sz * (halfW + 3.2), top = 12;
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, top, 12), mastMat);
+    const bx = sx * (halfL + (arena ? 7.5 : 3.2)), bz = sz * (halfW + (arena ? 12 : 3.2)), top = arena ? 21 : 12;
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(arena ? 0.3 : 0.14, arena ? 0.55 : 0.22, top, 12), mastMat);
     mast.position.set(bx, top / 2, bz); mast.castShadow = false;
     scene.add(mast);
-    const head = new THREE.Group();
+    let head;
+    if (arena) head = towerHead(mastMat, lm);
+    else {
+      head = new THREE.Group();
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 0.35), mastMat);
+      head.add(frame);
+      for (let i = 0; i < 6; i++) {
+        const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.38, 0.05), lm);
+        lamp.position.set(-0.7 + (i % 3) * 0.7, i < 3 ? 0.22 : -0.22, 0.19);
+        head.add(lamp);
+      }
+    }
     head.position.set(bx, top, bz);
     head.lookAt(sx * 4, 0, sz * 2);
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 0.35), mastMat);
-    head.add(frame);
-    for (let i = 0; i < 6; i++) {
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.38, 0.05), lm);
-      lamp.position.set(-0.7 + (i % 3) * 0.7, i < 3 ? 0.22 : -0.22, 0.19);
-      head.add(lamp);
-    }
     scene.add(head);
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: flare, color: 0xffe9c4, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6 }));
-    glow.scale.set(5, 5, 1); glow.position.set(bx - sx * 0.3, top, bz - sz * 0.3);
+    glow.scale.setScalar(arena ? 8 : 5); glow.position.set(bx - sx * 0.3, top, bz - sz * 0.3);
     scene.add(glow);
 
-    const spot = new THREE.SpotLight(0xfff1dc, 1500, 0, 0.78, 0.6, 2);
+    const spot = new THREE.SpotLight(0xfff1dc, arena ? 3600 : 1500, 0, 0.78, 0.6, 2);
     spot.position.set(bx, top, bz);
     spot.target.position.set(sx * 3, 0, sz * 1.5);
     spot.castShadow = true;
     spot.shadow.mapSize.set(1024, 1024);
-    spot.shadow.camera.near = 4; spot.shadow.camera.far = 50;
+    spot.shadow.camera.near = 4; spot.shadow.camera.far = arena ? 70 : 50;
     spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.03;
     spot.shadow.radius = 3;
     scene.add(spot, spot.target);
@@ -128,8 +137,8 @@ export function buildVenue(scene, renderer) {
     if (dying) venue.flicker = { spot, glow, mat: lm };
 
     // Volumetric-ish light cone (additive, fades with length).
-    const coneLen = 16;
-    const coneGeo = new THREE.ConeGeometry(6.5, coneLen, 32, 1, true);
+    const coneLen = arena ? 26 : 16;
+    const coneGeo = new THREE.ConeGeometry(arena ? 10 : 6.5, coneLen, 32, 1, true);
     coneGeo.translate(0, -coneLen / 2, 0);
     const coneMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false,
@@ -150,23 +159,39 @@ export function buildVenue(scene, renderer) {
   // ---------------------------------------------------------------- rooftop floor & parapet
   const conc = concreteTexture();
   conc.repeat.set(24, 18); conc.anisotropy = maxAniso;
-  const roof = new THREE.Mesh(new THREE.PlaneGeometry(64, 48), new THREE.MeshStandardMaterial({ map: conc, roughness: 0.95, metalness: 0 }));
+  const roof = new THREE.Mesh(new THREE.PlaneGeometry(arena ? 110 : 64, arena ? 90 : 48), new THREE.MeshStandardMaterial({ map: conc, roughness: 0.95, metalness: 0, color: arena ? 0x8a8f99 : 0xffffff }));
   roof.rotation.x = -Math.PI / 2; roof.position.y = -0.02; roof.receiveShadow = true;
   scene.add(roof);
-  const parapetMat = new THREE.MeshStandardMaterial({ color: 0x2c2d33, roughness: 0.9 });
-  for (const [w, d, x, z] of [[64, 0.4, 0, -24], [64, 0.4, 0, 24], [0.4, 48, -32, 0], [0.4, 48, 32, 0]]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.1, d), parapetMat);
-    m.position.set(x, 0.55, z); m.receiveShadow = true;
-    scene.add(m);
+  if (!arena) {
+    const parapetMat = new THREE.MeshStandardMaterial({ color: 0x2c2d33, roughness: 0.9 });
+    for (const [w, d, x, z] of [[64, 0.4, 0, -24], [64, 0.4, 0, 24], [0.4, 48, -32, 0], [0.4, 48, 32, 0]]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.1, d), parapetMat);
+      m.position.set(x, 0.55, z); m.receiveShadow = true;
+      scene.add(m);
+    }
   }
 
   // ---------------------------------------------------------------- court
-  const { map, roughness } = courtTextures();
+  const { map, roughness } = arena ? turfTextures() : courtTextures();
   map.anisotropy = maxAniso;
   const court = new THREE.Mesh(
     new THREE.PlaneGeometry(halfL * 2, halfW * 2),
-    new THREE.MeshStandardMaterial({ map, roughnessMap: roughness, roughness: 0.85, metalness: 0.0 }),
+    new THREE.MeshStandardMaterial({ map, roughnessMap: roughness, roughness: arena ? 0.95 : 0.85, metalness: 0.0 }),
   );
+  // Rain: the surface goes glossy (and a touch darker) so the floodlights streak on it.
+  const dryRough = court.material.roughness;
+  venue.setWet = on => {
+    court.material.roughness = on ? (arena ? 0.55 : 0.32) : dryRough;
+    court.material.roughnessMap = on ? null : roughness;
+    court.material.color.setScalar(on ? 0.8 : 1);
+    court.material.needsUpdate = true;
+  };
+  // A turf pitch runs a little wider than the cage floor, like a real 5-a-side centre.
+  if (arena) {
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry(halfL * 2 + 12, halfW * 2 + 5), new THREE.MeshStandardMaterial({ color: 0x3a7d2c, roughness: 0.95 }));
+    apron.rotation.x = -Math.PI / 2; apron.position.y = -0.005; apron.receiveShadow = true;
+    scene.add(apron);
+  }
   court.rotation.x = -Math.PI / 2;
   court.receiveShadow = true;
   scene.add(court);
@@ -200,7 +225,7 @@ export function buildVenue(scene, renderer) {
   const addPost = (x, z, h = wallH) => posts.push([x, z, h]);
 
   const boardMatFor = (seed, len, near) => {
-    const t = graffitiBoard(seed, len);
+    const t = arena ? adBoard(seed, len) : graffitiBoard(seed, len);
     t.anisotropy = maxAniso;
     return new THREE.MeshStandardMaterial({ map: t, roughness: 0.65, metalness: 0.1, transparent: near, opacity: near ? 0.35 : 1, depthWrite: !near });
   };
@@ -300,6 +325,9 @@ export function buildVenue(scene, renderer) {
     venue.goals.push(g);
   }
 
+  let bulbMat = null;
+  if (arena) bulbMat = buildStands(scene, venue).ledMat;
+  if (!arena) {
   // ---------------------------------------------------------------- rooftop props
   const propMat = new THREE.MeshStandardMaterial({ color: 0x4a4d55, metalness: 0.4, roughness: 0.6 });
   const darkMat = new THREE.MeshStandardMaterial({ color: 0x1f2026, roughness: 0.8 });
@@ -326,7 +354,7 @@ export function buildVenue(scene, renderer) {
   // String lights along the far side — warm bulbs that bloom.
   const bulbs = [];
   const bulbGeo = new THREE.SphereGeometry(0.07, 8, 6);
-  const bulbMat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0xffc46b, emissiveIntensity: 5 });
+  bulbMat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0xffc46b, emissiveIntensity: 5 });
   const wirePts = [];
   const zS = -halfW - 1.4;
   for (let x = -halfL; x <= halfL + 0.01; x += 0.25) {
@@ -341,10 +369,12 @@ export function buildVenue(scene, renderer) {
   bulbs.forEach(([x, y, z], i) => { M.makeTranslation(x, y, z); bulbMesh.setMatrixAt(i, M); });
   scene.add(bulbMesh);
 
+  }   // rooftop props
+
   // ---------------------------------------------------------------- claimed space
   // Small signs that the court belongs to the players, not a venue operator:
   // a bedsheet banner zip-tied to the far fence and spray paint on the floor.
-  {
+  if (!arena) {
     const bg = new THREE.PlaneGeometry(8, 1.5, 24, 4);
     const pos = bg.attributes.position;
     for (let i = 0; i < pos.count; i++) { const u = pos.getX(i) / 4; pos.setY(i, pos.getY(i) - 0.18 * (1 - u * u)); }
@@ -371,7 +401,7 @@ export function buildVenue(scene, renderer) {
     };
     decal(sprayTag('crown', 'CAGE KINGS', '#FFD400', { crown: true }), 3.4, 1.7, -12.2, -6.2, 0.35);
     decal(sprayTag('thirteen', '13', '#FF3B6B', { stencil: true, w: 256 }), 1.2, 1.2, 12.6, 6.8, -0.5, 0.7);
-    decal(sprayTag('bankit', 'BANK IT', '#00D1FF', { arrow: true }), 2.6, 1.3, 5.2, -7.6, Math.PI, 0.75);
+    decal(sprayTag('bankit', 'BANK IT', '#00D1FF', { arrow: true }), 2.6, 1.3, 5.2, -7.4, 0.12, 0.75);
     decal(sprayTag('est', 'EST. ROOFTOP', '#FFFFFF', { stencil: true }), 2.4, 1.2, -5.5, 7.4, 0.08, 0.5);
     // a tag on the stair hut
     const hut = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.6), new THREE.MeshStandardMaterial({ map: sprayTag('hut', 'NIGHT LEAGUE', '#39FF88'), transparent: true, depthWrite: false, roughness: 0.8 }));
@@ -391,7 +421,7 @@ export function buildVenue(scene, renderer) {
   const R = { flare: 0, flash: 0, gb: 0, color: new THREE.Color(0xffd400), beat: 0 };
   venue.react = (kind, color) => {
     if (color) R.color.set(color);
-    if (kind === 'goal') { R.flare = 1; R.flash = 1; }
+    if (kind === 'goal') { R.flare = 1; R.flash = 1; venue.crowd?.goal(); }
     else if (kind === 'skill') R.flash = Math.max(R.flash, 0.6);
     else if (kind === 'gb') R.gb = 1;
     else if (kind === 'gbEnd') R.gb = 0;
@@ -409,6 +439,7 @@ export function buildVenue(scene, renderer) {
     venue.fence.update(t); venue.nets.update(t);
     skyMat.uniforms.uTime.value = t;
     for (const f of venue.animated) f(t);
+    venue.crowd?.update(t, dt);
     R.flare = Math.max(0, R.flare - dt * 0.8); R.flash = Math.max(0, R.flash - dt * 2.2);
     const hot = Math.max(R.flash, R.gb * (0.55 + 0.45 * Math.sin(t * 6)));
     // floodlights: goal flare + the dying lamp

@@ -56,6 +56,22 @@ export const DRIB = {
   steal: 0.5,         // m: a defender's foot this close to a free-rolling dribble can nick it
 };
 
+// Playing surfaces change how the ball behaves (FIFA Street 2012 did this per venue):
+// smooth sport court vs artificial turf, and rain makes either skid and stay low.
+const SURFACE_BASE = { ...BALL };
+export const SURFACES = {
+  court: {},
+  turf: { rollDecel: 1.5, rollLinear: 0.42, groundE: 0.5, bounceMu: 0.55, slideMu: 0.38 },
+};
+export function setSurface(kind = 'court', wet = false) {
+  Object.assign(BALL, SURFACE_BASE, SURFACES[kind] || {});
+  if (wet) {
+    BALL.rollDecel *= 0.8; BALL.rollLinear *= 0.85;   // a wet ball runs on
+    BALL.bounceMu *= 0.6; BALL.slideMu *= 0.55;       // …and skids instead of gripping
+    BALL.groundE *= 0.9;                              // …and stays low
+  }
+}
+
 export const PLAYER = {
   radius: 0.36,
   height: 1.8,

@@ -2,7 +2,7 @@
 
 A 3D 5-a-side street football game that runs in the browser. It's played in a floodlit rooftop cage at night, and the walls are part of your attack.
 
-It draws on **FIFA Street (2012)** for skills, pannas, wall play and the style meter, and on **First Touch Soccer 15** for the broadcast camera and hold-to-power controls. Everything is built with Three.js: characters, animation, the venue, textures and audio are all procedural. No art or sound files are downloaded.
+It draws on **FIFA Street** for skills, pannas, wall play and the player-fired GAMEBREAKER, and on **First Touch Soccer 15** for the broadcast camera, hold-to-power controls and broadcast presentation: line-ups, the crest score bug, goal lower-thirds, R replays and the full-time sheet. Everything is built with Three.js: characters, animation, the venue, textures and audio are all procedural. No art or sound files are downloaded.
 
 **Play:** https://ai-football-flame.vercel.app. It works on desktop (keyboard or gamepad) and on phones (touch, landscape).
 
@@ -34,6 +34,12 @@ Set a **PLAYER TAG** on the title screen. Finished matches and trick-shot drill 
 - **Watch AI (class demo)**: AI vs AI with the debug overlay on. Every AI player shows its FSM state, its chosen action and the utility scores behind it.
 - **Trick-Shot Drill**: the direct lane is blocked by a defender. Bank a shot off the cage and past the keeper. The best route is off the **far** wall, back in at the near post.
 
+**Venues** (chosen in MATCH SETUP, each with **CLEAR** or **RAIN** weather):
+- **Rooftop Cage**: a night rooftop on asphalt. It has a hand-painted bedsheet banner, spray tags, a dying floodlight and a lo-fi boombox playing on the roof.
+- **Stadium Cage**: a floodlit turf pitch with stands on three sides, about 1,200 fans in the two teams' colours who jump on goals, a canopy, an LED ribbon and sponsor boards.
+- **The surface changes the ball**: turf rolls slower and bounces lower than the court, and rain makes either surface skid and stay low.
+- **Big moments light it up**: goals flare the floodlights and paint the venue in the scorer's colours.
+
 ## Controls
 | | Keyboard | Gamepad |
 |---|---|---|
@@ -44,6 +50,7 @@ Set a **PLAYER TAG** on the title screen. Finished matches and trick-shot drill 
 | Through ball | L | Y |
 | Lob · chip | I · Ctrl+I | X · LB+X |
 | Finesse curl | Ctrl+K | LB+B |
+| Fire **GAMEBREAKER** (meter full) | G | L3 / R3 |
 | Street Ball Control | Space (hold) | LT |
 | **Panna** | Space + Shift near a defender | LT → RT |
 | Stepover · roulette · drag-back · rainbow · flick-up | Q · E · F · R · U | Right-stick flicks, RB |
@@ -56,11 +63,12 @@ Set a **PLAYER TAG** on the title screen. Finished matches and trick-shot drill 
 - **Buttons on the right:** SHOOT (hold for power), PASS, THRU, LOB and SPRINT.
 - **SKILL:** tap for a stepover. Swipe ↑ for a rainbow, ↓ for a drag-back, or ←/→ for a stepover. Long-press near a defender for a panna.
 - **Defending:** the same buttons become SLIDE, SWITCH, TACKLE, PRESS and JOCKEY.
+- **Gamebreaker:** when your meter is full, a gold **GB** button appears. Tap it to fire.
 - **Home screen:** "Add to Home Screen" installs it as a full-screen landscape app.
 
 **Shooting:** aim roughly at the goal and the stick picks the post (assisted). Aim anywhere else, such as at the cage, and the ball goes exactly where you point (manual). The dotted preview shows the path, including any rebound, and turns yellow when it's going in.
 
-Skills, pannas, wall passes and cage goals fill the **STYLE** meter. When it's full, **GAMEBREAKER** triggers: 20 seconds of boosted shots and a stunned keeper.
+Skills, pannas, wall passes and cage goals fill the **STYLE** meter. A full meter banks a **GAMEBREAKER**, and **you choose when to fire it**, as in FIFA Street. It gives 20 seconds of harder, more precise strikes, each in slow motion, against a heavy-footed keeper. It's a boost, never a lock: about 60% of Gamebreaker strikes score in AI matches, against about 33% normally, and bad angles still get saved. AI sides fire theirs when they're attacking.
 
 ## How it's built
 ```

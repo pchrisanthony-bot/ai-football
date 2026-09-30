@@ -5,8 +5,8 @@ import { BALL, COURT } from '../config.js';
 import { makeBall, predictPath } from './ball.js';
 import { clamp } from '../util/math.js';
 
-const c = BALL.rollDecel, l = BALL.rollLinear;
-const F = v => v / l - (c / (l * l)) * Math.log(c + l * v);
+// Read live: the surface (court / turf, dry / wet) changes the rolling constants.
+const F = v => { const c = BALL.rollDecel, l = BALL.rollLinear; return v / l - (c / (l * l)) * Math.log(c + l * v); };
 
 // Distance a ball rolls from v0 until it slows to v1.
 export const rollDistance = (v0, v1 = 0) => Math.max(0, F(v0) - F(v1));
@@ -28,6 +28,7 @@ export function rollTime(v0, d) {
   // integrate dt = dx / v numerically (coarse, fine for AI)
   let v = v0, x = 0, t = 0;
   const h = 1 / 60;
+  const c = BALL.rollDecel, l = BALL.rollLinear;
   while (x < d && v > 0.05) { v = Math.max(0, v - (c + l * v) * h); x += v * h; t += h; }
   return t;
 }

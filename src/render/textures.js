@@ -334,3 +334,85 @@ export function sprayTag(key, word, color = '#FFD400', { w = 512, h = 256, crown
     return tex(c);
   });
 }
+
+// ---------------------------------------------------------------- stadium cage (FTS look)
+// Artificial turf: a mown checkerboard in two greens, blade grain, worn goalmouths
+// and centre, crisp white markings (same geometry as the street court).
+export function turfTextures() {
+  return once('turf', () => {
+    const PPM = 48, W = COURT.halfL * 2 * PPM, H = COURT.halfW * 2 * PPM;
+    const c = canvas(W, H), g = c.getContext('2d');
+    const r = rng(21);
+    const X = x => (x + COURT.halfL) * PPM, Z = z => (z + COURT.halfW) * PPM;
+    const sq = 2 * PPM;
+    for (let i = 0; i * sq < W; i++) for (let j = 0; j * sq < H; j++) {
+      const light = (i + j) % 2 === 0, stripe = i % 2 === 0;
+      g.fillStyle = light ? (stripe ? '#4a9636' : '#468f33') : (stripe ? '#3a7f29' : '#367926');
+      g.fillRect(i * sq, j * sq, sq, sq);
+    }
+    const img = g.getImageData(0, 0, W, H), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 26; d[i] += n * 0.6; d[i + 1] += n; d[i + 2] += n * 0.4; }
+    g.putImageData(img, 0, 0);
+    // wear: goalmouths, the centre spot, and the keeper's line
+    const wear = (x, z, rx, rz, a) => { const gr = g.createRadialGradient(X(x), Z(z), 0, X(x), Z(z), rx * PPM); gr.addColorStop(0, `rgba(150,140,90,${a})`); gr.addColorStop(1, 'rgba(150,140,90,0)'); g.save(); g.translate(X(x), Z(z)); g.scale(1, rz / rx); g.translate(-X(x), -Z(z)); g.fillStyle = gr; g.beginPath(); g.arc(X(x), Z(z), rx * PPM, 0, Math.PI * 2); g.fill(); g.restore(); };
+    wear(-COURT.halfL + 1.2, 0, 3, 2, 0.35); wear(COURT.halfL - 1.2, 0, 3, 2, 0.35); wear(0, 0, 3.2, 2.4, 0.22);
+    for (let i = 0; i < 70; i++) wear((r() - 0.5) * 30, (r() - 0.5) * 16, 0.5 + r() * 1.5, 0.3 + r() * 0.8, 0.06 + r() * 0.08);
+    // markings
+    g.strokeStyle = 'rgba(250,250,245,0.95)'; g.lineWidth = 0.09 * PPM;
+    g.strokeRect(X(-COURT.halfL) + 0.15 * PPM, Z(-COURT.halfW) + 0.15 * PPM, W - 0.3 * PPM, H - 0.3 * PPM);
+    g.beginPath(); g.moveTo(X(0), Z(-COURT.halfW)); g.lineTo(X(0), Z(COURT.halfW)); g.stroke();
+    g.beginPath(); g.arc(X(0), Z(0), COURT.centreR * PPM, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(X(-COURT.halfL), Z(0), COURT.boxR * PPM, -Math.PI / 2, Math.PI / 2); g.stroke();
+    g.beginPath(); g.arc(X(COURT.halfL), Z(0), COURT.boxR * PPM, Math.PI / 2, Math.PI * 1.5); g.stroke();
+    g.fillStyle = 'rgba(250,250,245,0.95)';
+    for (const x of [0, -COURT.halfL + 6, COURT.halfL - 6]) { g.beginPath(); g.arc(X(x), Z(0), 0.13 * PPM, 0, Math.PI * 2); g.fill(); }
+    const map = tex(c, { aniso: 16 });
+    const rc = canvas(256, 144), rg = rc.getContext('2d');
+    rg.fillStyle = '#f0f0f0'; rg.fillRect(0, 0, 256, 144);
+    return { map, roughness: tex(rc, { srgb: false }) };
+  });
+}
+
+// Sponsor-style perimeter boards (invented brands), clean like a stadium, not a wall.
+const SPONSORS = [['CAGE COLA', '#d7263d', '#fff'], ['ROOFTOP FM', '#111', '#FFD400'], ['VOLTKICK', '#1466FF', '#fff'], ['NUTMEG SPORTS', '#fff', '#111'],
+  ['BLOCK PARTY', '#39FF88', '#111'], ['SC TV', '#B84DFF', '#fff'], ['KORNER', '#FF8A00', '#111'], ['STREETCAGE', '#FFD400', '#111']];
+export function adBoard(seed, lengthM) {
+  return once(`ad${seed}_${lengthM}`, () => {
+    const PPM = 96, W = Math.round(lengthM * PPM), H = PPM;
+    const c = canvas(Math.min(W, 4096), H), g = c.getContext('2d');
+    g.scale(c.width / W, 1);
+    let x = 0, k = seed;
+    while (x < W) {
+      const [word, bg, fg] = SPONSORS[k++ % SPONSORS.length];
+      const w = PPM * 4;
+      g.fillStyle = bg; g.fillRect(x, 0, w, H);
+      g.fillStyle = fg; g.font = `900 ${H * 0.5}px "Arial Black", Impact, sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(word, x + w / 2, H / 2 + 2, w - 24);
+      g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(x, 0, w, 6);
+      x += w;
+    }
+    return tex(c);
+  });
+}
+
+// A scrolling LED ribbon along the front of the stands (emissive).
+export function ledRibbon() {
+  return once('ledribbon', () => {
+    const W = 2048, H = 64, c = canvas(W, H), g = c.getContext('2d');
+    let x = 0, k = 0;
+    while (x < W) {
+      const [word, bg, fg] = SPONSORS[k++ % SPONSORS.length];
+      const w = 256;
+      g.fillStyle = bg === '#fff' ? '#1a1a1a' : bg; g.fillRect(x, 0, w, H);
+      g.fillStyle = fg === '#111' ? '#fff' : fg; g.font = `900 34px "Arial Black", Impact, sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(word, x + w / 2, H / 2 + 1, w - 16);
+      x += w;
+    }
+    // LED pixel grid
+    g.fillStyle = 'rgba(0,0,0,.35)';
+    for (let i = 0; i < W; i += 4) g.fillRect(i, 0, 1, H);
+    for (let j = 0; j < H; j += 4) g.fillRect(0, j, W, 1);
+    const t = tex(c); t.wrapS = THREE.RepeatWrapping;
+    return t;
+  });
+}

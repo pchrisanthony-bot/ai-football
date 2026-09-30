@@ -326,9 +326,10 @@ kbd { display: inline-block; font: 700 11px var(--body); padding: 2px 6px; borde
   .boards { grid-template-columns: 1fr 1fr; gap: 10px 14px; font-size: 11px; }
   .boards td { padding: 3px 4px; }
   .stats-row { padding: 2px 0; }
-  .lineups { grid-template-columns: 1fr 1fr; gap: 8px; }
-  .lu-mid { grid-column: 1 / -1; order: -1; }
-  .lu-vs { padding: 4px; } .kit { width: 54px; height: 68px; } .lu-crest .crest { width: 26px; height: 30px; }
+  .lineups { grid-template-columns: 1fr 0.8fr 1fr; gap: 6px; margin: 2px 0 6px; }
+  .lu-vs { padding: 4px; gap: 2px; } .lu-v { font-size: 16px; padding: 0 2px; }
+  .lineups .kit { display: none; } .lu-crest .crest { width: 26px; height: 30px; }
+  .lu-bar { grid-template-columns: 24px 1fr; font-size: 8px; } .lu-bar i { height: 4px; }
   .lu-row { min-height: 28px; grid-template-columns: 30px 20px 1fr 32px; } .lu-row span { font-size: 11px; padding: 2px 4px; } .lu-row em { font-size: 15px; }
   .lu-head { font-size: 14px; padding: 3px; } .lu-comp { font-size: 12px; padding: 4px; }
   .ft-head { padding: 5px 10px; } .ft-score { font-size: 30px; } .ft-team { font-size: 14px; gap: 6px; } .ft-team .crest { width: 22px; height: 26px; }

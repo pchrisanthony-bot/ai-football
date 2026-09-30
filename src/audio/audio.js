@@ -29,6 +29,7 @@ export class Audio {
     this.startMusic();
     this.startAmbient();
     if (this.radioOn) this.radio(true);   // a match may have started before the first tap
+    if (this.rainOn) this.setRain(true);
   }
 
   get t() { return this.ctx ? this.ctx.currentTime : 0; }
@@ -235,8 +236,18 @@ export class Audio {
   }
 
   // ------------------------------------------------------------ night ambience
+  // Rain on the cage: a soft broadband hiss.
+  setRain(on) {
+    this.rainOn = on;
+    if (this.ctx) this.rainGain.gain.setTargetAtTime(on ? 0.11 : 0, this.t, 1.2);
+  }
+
   startAmbient() {
     const ctx = this.ctx;
+    const rn = this.noiseSrc(true), rh = ctx.createBiquadFilter(), rl = ctx.createBiquadFilter();
+    rh.type = 'highpass'; rh.frequency.value = 1400; rl.type = 'lowpass'; rl.frequency.value = 7500;
+    this.rainGain = ctx.createGain(); this.rainGain.gain.value = 0;
+    rn.connect(rh).connect(rl).connect(this.rainGain).connect(this.master); rn.start();
     // wind across the roof: low noise with a slow swell
     const w = this.noiseSrc(true), wf = ctx.createBiquadFilter(), wg = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain();
     wf.type = 'lowpass'; wf.frequency.value = 420; wf.Q.value = 0.7;
