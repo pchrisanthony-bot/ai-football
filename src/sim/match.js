@@ -851,18 +851,44 @@ export class Match {
     return Math.min(Math.hypot(b.x - p.x, b.z - p.z), Math.hypot(fx - p.x, fz - p.z)) < PLAYER.kickReach + 0.25 && b.y < maxH;
   }
 
-  requestPass(p, dirX, dirZ, kind = 'pass', power = null, flair = false) {
-    const r = this.pickReceiver(p, dirX, dirZ, kind);
+  // opts.lead: a lofted through ball (lob into the receiver's run); opts.contact: longer wind-up.
+  requestPass(p, dirX, dirZ, kind = 'pass', power = null, flair = false, opts = {}) {
+    const extra = opts.contact != null ? { contact: opts.contact } : {};
+    const r = this.pickReceiver(p, dirX, dirZ, opts.lead ? 'through' : kind);
     if (!r) {
       // No one there: play it into space in that direction.
       const hl = Math.hypot(dirX, dirZ);
       const ang = hl > 0.2 ? Math.atan2(dirZ, dirX) : p.facing;
       const dist = kind === 'lob' ? 14 : 10;
       const target = { x: clamp(p.x + Math.cos(ang) * dist, -COURT.halfL + 1, COURT.halfL - 1), z: clamp(p.z + Math.sin(ang) * dist, -COURT.halfW + 1, COURT.halfW - 1) };
-      return this.requestKick(p, kind, { target, power, flair });
+      return this.requestKick(p, kind, { target, power, flair, ...extra });
     }
-    const target = kind === 'lob' ? { x: r.x + r.vx * 1.1, z: r.z + r.vz * 1.1 } : null;
-    return this.requestKick(p, kind, { receiver: r, target, power, flair });
+    const target = kind === 'lob' ? (opts.lead ? this.leadTarget(p, r, true) : { x: r.x + r.vx * 1.1, z: r.z + r.vz * 1.1 }) : null;
+    return this.requestKick(p, kind, { receiver: r, target, power, flair, ...extra });
+  }
+
+  // Double-tap pass: a ground pass still winding up becomes a dinked (lofted) pass.
+  dinkPass(p) {
+    const a = p.action, b = this.ball;
+    if (!a || a.type !== 'pass' || a.fired || a.angle != null || b.owner !== p || b.inHands) return false;
+    const r = a.receiver;
+    a.type = 'lob';
+    if (r) a.target = { x: r.x + r.vx * 1.1, z: r.z + r.vz * 1.1 };
+    a.contact = Math.max(a.t + 0.04, ACTIONS.lob.contact);
+    a.dur = ACTIONS.lob.dur + (a.contact - ACTIONS.lob.contact);
+    this.emit({ type: 'windup', pid: p.id, kind: 'lob' });
+    return true;
+  }
+
+  // The defender a panna would go through (close, in front, not the keeper), or null.
+  pannaTarget(p) {
+    let target = null, bd = 3.0;
+    for (const d of this.opponents(p)) {
+      const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz);
+      const ang = Math.abs(angleDiff(p.facing, Math.atan2(dz, dx)));
+      if (dist < bd && ang < 0.8 && d.role !== 'GK') { bd = dist; target = d; }
+    }
+    return target;
   }
 
   pickReceiver(p, dirX, dirZ, kind) {
@@ -904,12 +930,7 @@ export class Match {
     const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
     if (name === 'panna') {
       // Needs a defender close in front.
-      let target = null, bd = 3.0;
-      for (const d of this.opponents(p)) {
-        const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz);
-        const ang = Math.abs(angleDiff(p.facing, Math.atan2(dz, dx)));
-        if (dist < bd && ang < 0.8 && d.role !== 'GK') { bd = dist; target = d; }
-      }
+      const target = this.pannaTarget(p);
       if (!target) return false;
       this.startAction(p, 'panna', { target: target.id });
       return true;

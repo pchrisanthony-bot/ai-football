@@ -77,25 +77,27 @@ export const DIFFS = [{ label: 'AMATEUR', v: 0.35 }, { label: 'PRO', v: 0.6 }, {
 
 export function controlsPanel() {
   if (document.documentElement.classList.contains('is-touch')) return h('div', 'controls-panel', `
-    <div class="cp-col"><h3>MOVE</h3>
-      <p>Left thumb anywhere on the left half: joystick</p>
-      <p><b>SPRINT</b> hold while moving</p>
-      <h3>ATTACK</h3>
-      <p><b>SHOOT</b> hold for power, release to strike</p>
-      <p class="tip">Point the stick at the goal = assisted. Point it at the <b>cage</b> = bank shot; the dotted preview shows the rebound.</p>
-      <p><b>PASS</b> · <b>THRU</b> through ball · <b>LOB</b></p>
+    <div class="cp-col"><h3>SHOOT</h3>
+      <p><b>Hold</b> for power, release to strike</p>
+      <p><b>Swipe ↑</b> chip · <b>swipe ↓</b> finesse curl</p>
+      <p class="tip">Stick at the goal = assisted. Stick at the <b>cage</b> = bank shot; the dotted line shows the rebound.</p>
+      <h3>PASS</h3>
+      <p><b>Tap / hold</b> ground pass · <b>swipe →</b> driven</p>
+      <p><b>Double-tap</b> dinked pass over the top</p>
     </div>
-    <div class="cp-col"><h3>SKILL BUTTON</h3>
-      <p>Tap: stepover</p>
-      <p>Swipe ↑ rainbow flick · ↓ drag-back · ← → stepover</p>
-      <p>Long-press near a defender: <b>PANNA</b></p>
-      <p class="tip">Skills, pannas and cage goals fill the <b>STYLE</b> meter → <b>GAMEBREAKER</b>.</p>
+    <div class="cp-col"><h3>THROUGH</h3>
+      <p><b>Tap</b> through ball · <b>swipe ↑</b> lofted through</p>
+      <h3>SPRINT / SKILL</h3>
+      <p><b>Hold</b> sprint · <b>tap</b> stepover</p>
+      <p><b>Swipe</b> ↑ rainbow · ↓ drag-back · ←→ roulette</p>
+      <p><b>PANNA</b> pops up when a defender is close in front</p>
     </div>
     <div class="cp-col"><h3>DEFEND</h3>
-      <p><b>SWITCH</b> player · <b>TACKLE</b> · <b>SLIDE</b></p>
-      <p><b>PRESS</b> hold: teammate presses too</p>
-      <p><b>JOCKEY</b> hold: contain the attacker</p>
-      <h3>GAME</h3>
+      <p><b>TACKLE</b> tap · <b>swipe</b> to slide</p>
+      <p><b>SWITCH</b> player · <b>PRESS</b> hold: teammate presses</p>
+      <p><b>JOCKEY</b> hold: contain · <b>SPRINT</b> hold</p>
+      <h3>MOVE</h3>
+      <p>Left thumb anywhere on the left half</p>
       <p>❚❚ pause · tap to skip replays</p>
     </div>`);
   return h('div', 'controls-panel', `

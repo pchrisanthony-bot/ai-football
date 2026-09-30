@@ -119,7 +119,7 @@ function toControls() {
   clearScreens();
   G.state = 'controls';
   const scr = addScreen('screen dim');
-  G.menu = new Menu(scr, { cls: 'center', title: 'CONTROLS', subtitle: 'KEYBOARD · GAMEPAD', items: [{ label: 'BACK', action: toTitle }], side: controlsPanel() });
+  G.menu = new Menu(scr, { cls: 'center', title: 'CONTROLS', subtitle: TOUCH ? 'TOUCH · TAP, HOLD, SWIPE' : 'KEYBOARD · GAMEPAD', items: [{ label: 'BACK', action: toTitle }], side: controlsPanel() });
   G.menu.onNav = nav;
 }
 
@@ -440,7 +440,11 @@ function tick(dt) {
     input.touch.setVisible(!!live && !!G.human, { drill: !!G.drill });
     if (live && m.human) {
       const o = m.ball.owner;
-      input.touch.setMode(o ? o.team === m.human.team : Math.hypot(m.ball.x - m.human.x, m.ball.z - m.human.z) < 3);
+      const attack = o ? o.team === m.human.team : Math.hypot(m.ball.x - m.human.x, m.ball.z - m.human.z) < 3;
+      input.touch.setMode(attack);
+      input.touch.setContext(attack ? (G.human.pannaReady() ? 'panna' : null) : 'jockey');
+      const c = G.human.charge;
+      input.touch.setCharge(c && c.t > 0.08 ? c.kind : null, G.human.chargeLevel());
     }
   }
   rig.zoomBias = innerHeight < 520 ? -3 : 0;

@@ -60,9 +60,12 @@ export class HumanController {
     if (m.phase !== 'play') return;
     const canUseBall = mine || (!b.owner && m.ballReachableSoon(p, 1.6));
 
+    // Double-tap PASS: the second tap lands while the first pass is winding up and dinks it.
+    const dinked = mine && inp.pressed('pass') && m.dinkPass(p);
+
     // ---- charged kicks (hold for power, release to strike)
     for (const kind of ['shoot', 'pass', 'through', 'lob']) {
-      if (inp.pressed(kind) && (canUseBall || kind === 'shoot') && !this.charge) {
+      if (inp.pressed(kind) && (canUseBall || kind === 'shoot') && !this.charge && !(dinked && kind === 'pass')) {
         this.charge = { kind, t: 0, aimed: hasStick, ang: hasStick ? Math.atan2(st.z, st.x) : Math.atan2(-b.z, m.oppGoalX(p.team) - b.x) };
       }
     }
@@ -79,7 +82,7 @@ export class HumanController {
         const flair = inp.down('flair');
         const aim = this.aimStick();
         this.charge = null;
-        if (mine || canUseBall) this.fire(kind, power, flair, kind === 'shoot' ? aim : st);
+        if (mine || canUseBall) this.fire(kind, power, flair, kind === 'shoot' ? aim : st, inp.gest[kind]);
       }
     }
 
@@ -93,6 +96,7 @@ export class HumanController {
     } else {
       m.ai.team[this.team].forcePress = false;
       // ---- skills (keyboard keys or right-stick flicks, FIFA Street style)
+      if (inp.skill) this.touchSkill(inp.skill, st);
       const flick = inp.rflick;
       const skill =
         inp.pressed('stepover') || flick === 'left' || flick === 'right' ? 'stepover' :
@@ -106,18 +110,45 @@ export class HumanController {
     }
   }
 
-  fire(kind, power, flair, st) {
+  // gesture: how a touch button was released, e.g. SHOOT swiped 'up' = chip, 'down' = curl.
+  fire(kind, power, flair, st, gesture = null) {
     const m = this.m, p = this.p;
+    const side = gesture === 'left' || gesture === 'right';
     if (kind === 'shoot') {
-      const aim = m.humanAim(p, st.x, st.z, power, flair, false);
+      const chip = gesture === 'up';
+      const aim = m.humanAim(p, st.x, st.z, power, (flair || gesture === 'down') && !chip, chip);
       m.requestShot(p, aim);
     } else if (kind === 'lob' && flair) {
       // Chip shot
       const aim = m.humanAim(p, st.x, st.z, power, false, true);
       m.requestShot(p, aim);
+    } else if (kind === 'through' && gesture === 'up') {
+      m.requestPass(p, st.x, st.z, 'lob', null, false, { lead: true });   // lofted through ball
+    } else if (kind === 'pass' && side) {
+      m.requestPass(p, st.x, st.z, 'pass', 1, flair);                      // driven ground pass
     } else {
-      m.requestPass(p, st.x, st.z, kind, kind === 'pass' ? power : null, flair);
+      // On touch the pass winds up a little longer so a second tap can dink it.
+      const opts = kind === 'pass' && this.in.touch?.enabled ? { contact: 0.21 } : {};
+      m.requestPass(p, st.x, st.z, kind, kind === 'pass' ? power : null, flair, opts);
     }
+  }
+
+  // Skill from the touch SKILL button: { name, dx, dy } with the swipe in screen pixels.
+  touchSkill(sk, st) {
+    const m = this.m, p = this.p;
+    if (sk.name === 'panna') { m.requestSkill(p, 'panna'); return; }
+    // Side for stepovers/roulettes: the swipe's side of the player's facing, else the stick's.
+    const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
+    const len = Math.hypot(sk.dx || 0, sk.dy || 0);
+    const perp = len ? ((sk.dx || 0) * -fz + (sk.dy || 0) * fx) / len : 0;   // screen y down = +z
+    const side = Math.abs(perp) > 0.3 ? Math.sign(perp) : (st.x * -fz + st.z * fx) >= 0 ? 1 : -1;
+    m.requestSkill(p, sk.name, -fz * side, fx * side);
+  }
+
+  // A panna is on: we have the ball and a defender is close in front (drives the touch prompt).
+  pannaReady() {
+    const m = this.m, p = this.p;
+    return !!p && m.phase === 'play' && m.ball.owner === p && !m.ball.inHands && m.canAct(p) && !!m.pannaTarget(p);
   }
 
   // While charging, what would the shot do? (drives the aim preview)

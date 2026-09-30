@@ -34,6 +34,8 @@ export class Input {
     this._rWasCentered = true;
     this.usingPad = false;
     this.touch = null;              // TouchControls, when on a touch device
+    this.gest = {};                 // button → how it was released this frame (touch swipe: 'up'|'down'|'left'|'right')
+    this.skill = null;              // touch skill event this frame: { name, dx, dy }
     this.tapPending = false; this.tapFrame = false;
     addEventListener('pointerdown', e => { if (!(e.target && e.target.tagName === 'INPUT')) this.tapPending = true; });
     const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
@@ -64,6 +66,14 @@ export class Input {
       b.lastHeld = b.released ? b.held : b.lastHeld;
       b.down = down;
     }
+    // Touch gestures ride along with the release they belong to.
+    this.gest = {};
+    if (T) for (const name of Object.keys(T.gest)) {
+      if (this.btn[name]?.released) { this.gest[name] = T.gest[name]; delete T.gest[name]; }
+      else if (!this.btn[name]?.down) delete T.gest[name];
+    }
+    this.skill = T ? T.skill : null;
+    if (T) T.skill = null;
     // movement
     let x = 0, y = 0;
     if (this.btn.left.down) x -= 1;
@@ -86,7 +96,6 @@ export class Input {
       if (rm < 0.3) this._rWasCentered = true;
     } else this.rflick = null;
     if (T && T.enabled && Math.hypot(T.move.x, T.move.y) > 0.01) { x = T.move.x; y = T.move.y; }
-    if (T && T.pendingFlick) { this.rflick = T.pendingFlick; T.pendingFlick = null; }
     const m = Math.hypot(x, y);
     if (m > 1) { x /= m; y /= m; }
     this.move.x = x; this.move.y = y;
