@@ -101,8 +101,8 @@ export class HumanController {
         inp.pressed('rainbow') || flick === 'up' ? 'rainbow' :
         inp.pressed('flickup') ? 'flickup' : null;
       if (skill) m.requestSkill(p, skill, flick === 'left' ? -1 : flick === 'right' ? 1 : st.x, st.z);
-      // Panna: hold Street Ball Control, tap sprint toward a defender.
-      if (ctl && inp.pressed('sprint')) m.requestSkill(p, 'panna');
+      // Panna: hold Street Ball Control, tap sprint toward a defender (touch: long-press SKILL).
+      if ((ctl && inp.pressed('sprint')) || inp.pressed('panna')) m.requestSkill(p, 'panna');
     }
   }
 

@@ -9,6 +9,7 @@ const KEYMAP = {
   flair: ['ControlLeft', 'ControlRight'],
   stepover: ['KeyQ'], roulette: ['KeyE'], dragback: ['KeyF'], rainbow: ['KeyR'], flickup: ['KeyU'],
   rush: ['KeyO'],
+  panna: [],
   pause: ['Escape', 'KeyP'],
   debug: ['Tab'],
   confirm: ['Enter', 'NumpadEnter'],
@@ -32,6 +33,9 @@ export class Input {
     this.rflick = null;                   // 'up' | 'down' | 'left' | 'right' — right-stick flick this frame
     this._rWasCentered = true;
     this.usingPad = false;
+    this.touch = null;              // TouchControls, when on a touch device
+    this.tapPending = false; this.tapFrame = false;
+    addEventListener('pointerdown', e => { if (!(e.target && e.target.tagName === 'INPUT')) this.tapPending = true; });
     const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
     addEventListener('keydown', e => {
       if (typing(e)) return;          // don't steer the game while typing a player tag
@@ -43,11 +47,13 @@ export class Input {
   }
 
   update(dt) {
+    this.tapFrame = this.tapPending; this.tapPending = false;
+    const T = this.touch;
     const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
     const pad = pads[0];
     const padDown = (name) => pad && (PADMAP[name] || []).some(i => pad.buttons[i] && (pad.buttons[i].pressed || pad.buttons[i].value > 0.4));
     for (const [name, b] of Object.entries(this.btn)) {
-      const kd = (KEYMAP[name] || []).some(c => this.keys.has(c) || this.tapped.has(c));
+      const kd = (KEYMAP[name] || []).some(c => this.keys.has(c) || this.tapped.has(c)) || (T ? T.isDown(name) : false);
       const pd = padDown(name);
       if (pd) this.usingPad = true;
       const down = kd || pd;
@@ -79,15 +85,18 @@ export class Input {
       }
       if (rm < 0.3) this._rWasCentered = true;
     } else this.rflick = null;
+    if (T && T.enabled && Math.hypot(T.move.x, T.move.y) > 0.01) { x = T.move.x; y = T.move.y; }
+    if (T && T.pendingFlick) { this.rflick = T.pendingFlick; T.pendingFlick = null; }
     const m = Math.hypot(x, y);
     if (m > 1) { x /= m; y /= m; }
     this.move.x = x; this.move.y = y;
     this.tapped.clear();
+    if (T) T.endFrame();
   }
 
   pressed(name) { return this.btn[name]?.pressed; }
   released(name) { return this.btn[name]?.released; }
   down(name) { return this.btn[name]?.down; }
   held(name) { return this.btn[name]?.held || 0; }
-  anyPressed() { return Object.values(this.btn).some(b => b.pressed); }
+  anyPressed() { return this.tapFrame || Object.values(this.btn).some(b => b.pressed); }
 }

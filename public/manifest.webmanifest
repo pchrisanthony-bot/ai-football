@@ -1,0 +1,11 @@
+{
+  "name": "STREETCAGE",
+  "short_name": "STREETCAGE",
+  "description": "5-a-side street football in a floodlit rooftop cage.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#05060a",
+  "theme_color": "#05060a",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

@@ -76,6 +76,28 @@ export const MODES = [
 export const DIFFS = [{ label: 'AMATEUR', v: 0.35 }, { label: 'PRO', v: 0.6 }, { label: 'LEGEND', v: 0.88 }];
 
 export function controlsPanel() {
+  if (document.documentElement.classList.contains('is-touch')) return h('div', 'controls-panel', `
+    <div class="cp-col"><h3>MOVE</h3>
+      <p>Left thumb anywhere on the left half: joystick</p>
+      <p><b>SPRINT</b> hold while moving</p>
+      <h3>ATTACK</h3>
+      <p><b>SHOOT</b> hold for power, release to strike</p>
+      <p class="tip">Point the stick at the goal = assisted. Point it at the <b>cage</b> = bank shot; the dotted preview shows the rebound.</p>
+      <p><b>PASS</b> · <b>THRU</b> through ball · <b>LOB</b></p>
+    </div>
+    <div class="cp-col"><h3>SKILL BUTTON</h3>
+      <p>Tap: stepover</p>
+      <p>Swipe ↑ rainbow flick · ↓ drag-back · ← → stepover</p>
+      <p>Long-press near a defender: <b>PANNA</b></p>
+      <p class="tip">Skills, pannas and cage goals fill the <b>STYLE</b> meter → <b>GAMEBREAKER</b>.</p>
+    </div>
+    <div class="cp-col"><h3>DEFEND</h3>
+      <p><b>SWITCH</b> player · <b>TACKLE</b> · <b>SLIDE</b></p>
+      <p><b>PRESS</b> hold: teammate presses too</p>
+      <p><b>JOCKEY</b> hold: contain the attacker</p>
+      <h3>GAME</h3>
+      <p>❚❚ pause · tap to skip replays</p>
+    </div>`);
   return h('div', 'controls-panel', `
     <div class="cp-col"><h3>ATTACK</h3>
       <p><kbd>WASD</kbd> Move <span>L-stick</span></p>

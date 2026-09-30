@@ -4,14 +4,14 @@ import { SIM_DT, COURT } from '../src/config.js';
 
 export function playMatch(opts = {}, verbose = false) {
   const m = new Match({ humanTeam: null, seconds: 180, ...opts });
-  const tally = { kicks: 0, walls: 0, saves: 0, goals: [], skills: {}, pannas: 0, tackles: 0, stuck: 0, nan: false, maxLoose: 0, gb: 0, headers: 0, states: {} };
+  const tally = { bankShots: 0, kicks: 0, walls: 0, saves: 0, goals: [], skills: {}, pannas: 0, tackles: 0, stuck: 0, nan: false, maxLoose: 0, gb: 0, headers: 0, states: {} };
   let loose = 0, steps = 0;
   const maxSteps = (opts.seconds ?? 180) * 120 * 3;
   while (m.phase !== 'fulltime' && steps < maxSteps) {
     m.step(SIM_DT);
     steps++;
     for (const e of m.drainEvents()) {
-      if (e.type === 'kick') tally.kicks++;
+      if (e.type === 'kick') { tally.kicks++; const k = m.players.find(q => q.id === e.pid); if (e.kind === 'shot' && k && k.ai.plan && k.ai.plan.kind === 'shoot' && k.ai.plan.bank) tally.bankShots++; }
       if (e.type === 'wall') tally.walls++;
       if (e.type === 'save') tally.saves++;
       if (e.type === 'header') tally.headers++;
@@ -52,7 +52,8 @@ export default function () {
   results.push({ name: 'matches finish', ok: all.every(r => r.finished) });
   results.push({ name: 'no NaN', ok: all.every(r => !r.nan) });
   results.push({ name: 'goals happen (avg 2–12 per match)', ok: goals / all.length >= 2 && goals / all.length <= 12, info: `${goals} goals in ${all.length} matches` });
-  results.push({ name: 'some cage goals', ok: cage > 0, info: `${cage} cage goals` });
+  const banks = all.reduce((s, r) => s + r.bankShots, 0);
+  results.push({ name: 'AI uses the cage (bank-shot attempts)', ok: banks >= 4, info: `${banks} bank shots, ${cage} cage goals` });
   results.push({ name: 'keepers make saves', ok: all.reduce((s, r) => s + r.saves, 0) > 4 });
   results.push({ name: 'ball never dead for >6 s', ok: all.every(r => r.maxLoose < 6), info: all.map(r => r.maxLoose.toFixed(1)).join(', ') });
   const ok = all.reduce((s, r) => s + r.stats[0].passesOk + r.stats[1].passesOk, 0), tot = all.reduce((s, r) => s + r.stats[0].passes + r.stats[1].passes, 0);

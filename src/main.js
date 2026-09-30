@@ -12,6 +12,7 @@ import { MatchView } from './render/matchview.js';
 import { Match } from './sim/match.js';
 import { SIM_DT, COURT } from './config.js';
 import { Input } from './input/input.js';
+import { TouchControls, isTouchDevice } from './input/touch.js';
 import { HumanController } from './game/human.js';
 import { Audio } from './audio/audio.js';
 import { HUD } from './ui/hud.js';
@@ -30,6 +31,9 @@ const venue = buildVenue(R.scene, R.renderer);
 const fx = new FX(R.scene);
 const rig = new CameraRig(R.camera);
 const input = new Input();
+const TOUCH = isTouchDevice();
+document.documentElement.classList.toggle('is-touch', TOUCH);
+if (TOUCH) input.touch = new TouchControls(document.getElementById('ui'), input);
 const audio = new Audio();
 const hud = new HUD(ui);
 const screens = document.createElement('div');
@@ -46,7 +50,7 @@ const perf = { acc: [], cap: 3 };
   const dbg = gl.getExtension('WEBGL_debug_renderer_info');
   const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
   const integrated = /Intel|Iris|UHD|HD Graphics|Mali|Adreno|Apple GPU|SwiftShader|llvmpipe/i.test(gpu);
-  R.setQuality(integrated ? 1 : 2);
+  R.setQuality(TOUCH ? 0 : integrated ? 1 : 2);
   perf.gpu = gpu;
 }
 function governor(dtReal) {
@@ -104,7 +108,7 @@ function toTitle() {
       { label: `PLAYER TAG  ·  ${getTag() || 'NOT SET'}`, action: () => askTag(toTitle) },
       { label: 'CONTROLS', action: toControls },
     ],
-    footer: `Arrows / D-pad to move · Enter / A to select${online() ? '' : ' · leaderboards offline'}`,
+    footer: `${TOUCH ? 'Tap to select' : 'Arrows / D-pad to move · Enter / A to select'}${online() ? '' : ' · leaderboards offline'}`,
   });
   G.menu.onNav = nav;
   audio.music(true);
@@ -221,19 +225,25 @@ function askTag(done) {
   box.className = 'menu center tag-entry interactive';
   box.innerHTML = `<div class="menu-title">PLAYER TAG</div><div class="menu-sub">2–16 LETTERS, NUMBERS, SPACE . _ -  ·  SHOWN ON THE LEADERBOARDS</div>
     <input class="tag-input" maxlength="16" spellcheck="false" autocomplete="off" placeholder="YOUR TAG">
+    <div class="tag-btns"><div class="menu-item tag-save">SAVE</div><div class="menu-item tag-cancel">CANCEL</div></div>
     <div class="menu-foot"><kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel</div><div class="tag-err"></div>`;
   scr.appendChild(box);
   const inp = box.querySelector('input'), err = box.querySelector('.tag-err');
   inp.value = getTag() || '';
   setTimeout(() => inp.focus(), 30);
+  const save = () => {
+    const t = setTag(inp.value);
+    if (!t) { err.textContent = 'Use 2–16 letters, numbers, space . _ -'; return; }
+    inp.blur(); audio.ui(); done();
+  };
+  const cancel = () => { inp.blur(); audio.uiBack(); done(); };
   inp.addEventListener('keydown', e => {
     e.stopPropagation();
-    if (e.key === 'Enter') {
-      const t = setTag(inp.value);
-      if (!t) { err.textContent = 'Use 2–16 letters, numbers, space . _ -'; return; }
-      audio.ui(); done();
-    } else if (e.key === 'Escape') { audio.uiBack(); done(); }
+    if (e.key === 'Enter') save();
+    else if (e.key === 'Escape') cancel();
   });
+  box.querySelector('.tag-save').addEventListener('pointerdown', e => { e.preventDefault(); save(); });
+  box.querySelector('.tag-cancel').addEventListener('pointerdown', e => { e.preventDefault(); cancel(); });
 }
 
 function toBoards(back = toTitle) {
@@ -425,6 +435,16 @@ function tick(dt) {
   gbU.uGB.value += ((gbTeam ? 1 : 0) - gbU.uGB.value) * Math.min(1, dt * 3);
   if (gbTeam) gbU.uGBColor.value.set(gbTeam.def.kit.trim);
 
+  if (input.touch) {
+    const live = G.state === 'match' && m && (m.phase === 'play' || m.phase === 'kickoff');
+    input.touch.setVisible(!!live && !!G.human, { drill: !!G.drill });
+    if (live && m.human) {
+      const o = m.ball.owner;
+      input.touch.setMode(o ? o.team === m.human.team : Math.hypot(m.ball.x - m.human.x, m.ball.z - m.human.z) < 3);
+    }
+  }
+  rig.zoomBias = innerHeight < 520 ? -3 : 0;
+
   venue.update(G.t, R.camera);
   fx.update(dt);
   rig.apply(dt);
@@ -467,6 +487,12 @@ function stepMatch(dt, quiet) {
 fx.resize(innerHeight);
 addEventListener('resize', () => fx.resize(innerHeight));
 addEventListener('pointerdown', () => audio.init());
+// Phones: go full-screen (and lock landscape where the browser allows it) on the first tap.
+if (TOUCH) addEventListener('pointerdown', () => {
+  const el = document.documentElement;
+  if (document.fullscreenElement || !el.requestFullscreen) return;
+  el.requestFullscreen({ navigationUI: 'hide' }).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+}, { once: true });
 toTitle();
 R.renderer.compile(R.scene, R.camera);
 requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
