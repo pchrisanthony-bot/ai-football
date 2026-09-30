@@ -23,12 +23,16 @@ export const COURT = {
 export const BALL = {
   r: 0.11,
   gravity: 9.81,
-  drag: 0.013,        // a = −k|v|v   (ρ=1.2, Cd≈0.25, A=0.038 m², m=0.43 kg)
+  drag: 0.012,        // a = −k|v|v above the drag crisis (ρ=1.2, Cd≈0.22, A=0.038 m², m=0.43 kg)
+  dragLow: 0.02,      // …and below it (Cd≈0.4): slow balls die, a hard shot "dips" as it slows
+  crisisLo: 8,        // m/s: the drag crisis (boundary layer goes turbulent) happens
+  crisisHi: 14,       //      between these speeds for a modern panelled ball
   magnus: 0.0042,     // a = S·(ω × v)
   spinDecayAir: 0.35, // 1/s
   spinDecayGround: 3.0,
   groundE: 0.55,      // vertical restitution on bounce
-  groundGrip: 0.82,   // tangential velocity kept on a bounce
+  bounceMu: 0.45,     // friction on a bounce: spin and speed trade at the contact point
+  slideMu: 0.3,       // kinetic friction while a ball skids before it rolls
   rollDecel: 1.2,     // m/s² constant rolling resistance
   rollLinear: 0.35,   // 1/s speed-proportional damping while rolling
   bounceMinVy: 0.7,   // below this the ball settles into a roll
@@ -40,15 +44,31 @@ export const BALL = {
   netDamp: 6.0,       // 1/s extra damping inside the goal
 };
 
+// Knock-on dribbling: at pace the ball is touched ahead and rolls FREE (real ball
+// physics) until the next touch. Turning means reaching the ball and touching it the
+// new way; a heavy touch can be nicked. Slow play / close control keep it at the feet.
+export const DRIB = {
+  knockMin: 3.3,      // m/s: faster than this (no close control) -> knock-on touches
+  touchGap: 0.2,      // s: fastest touch cadence
+  reach: 0.62,        // m ahead of the body where the foot can play it
+  lunge: 0.55,        // m of extra reach when stretching to cut the ball a new way
+  lose: 3.4,          // m: further than this it's a loose ball
+  steal: 0.5,         // m: a defender's foot this close to a free-rolling dribble can nick it
+};
+
 export const PLAYER = {
   radius: 0.36,
   height: 1.8,
   jog: 5.0,
   sprint: 7.4,
-  accel: 22,          // m/s² at standstill — tapers a = a_max·(1 − v/v_max)
-  decel: 32,
-  turnSlow: 22,       // rad/s at walking pace
-  turnFast: 8,        // rad/s at full sprint (sharp cuts cost speed)
+  // Momentum locomotion: velocity is a vector steered by three grip limits, so a cut
+  // at full sprint has to brake before it turns (measured before this: 90° at 7 m/s
+  // in 0.2 s with no speed loss ≈ 6 g — now ≈ 0.4 s with a plant and a speed dip).
+  accel: 15,          // m/s² propulsion from standstill (× archetype profile × accel attr)
+  brake: 17,          // m/s² braking along the run
+  grip: 15,           // m/s² sideways grip at full sprint…
+  gripSlow: 30,       // …and at walking pace (tight turns are cheap when slow)
+  gripMax: 27,        // friction circle: cap on total horizontal acceleration
   controlRadius: 0.62,
   staminaDrain: 0.09, // per second of sprinting
   staminaRegen: 0.05,
@@ -60,6 +80,8 @@ export const KICK = {
   shotContact: 0.16,
   lobContact: 0.14,
   passMin: 8, passMax: 19,
+  chipSpin: 38,       // rad/s backspin on a chip (floats, then checks up)
+  lobSpin: 24,        // rad/s backspin on a lofted pass
   throughLead: 0.75,      // s of receiver run to lead a through ball by
   shotMin: 12, shotMax: 29,
   chargeTime: 0.9,        // s to full power

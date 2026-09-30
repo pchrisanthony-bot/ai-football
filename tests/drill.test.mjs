@@ -10,19 +10,25 @@ export function setupDrill(m, v) { const r = setupDrillCore(m, v); m.human = r.s
 
 // Find the manual angle whose preview ends in the goal (like a player watching the dotted line).
 function aimFor(m, p, tz, w, power) {
-  // Like a player watching the preview: find the window of angles that end in the
-  // goal off the cage, then aim at the middle of it.
+  // Like a player watching the preview: find the angles that end in the goal off the
+  // cage, then pick the one that finishes furthest from the keeper while staying a
+  // safe 0.3 m inside the post (shooting at the middle means shooting at him).
   const b = m.ball;
+  const gk = m.keeper(1);
   const base = bankAim(b.x, b.z, COURT.halfL, tz, w).angle;
-  const ok = [];
+  let best = null, bestD = -1;
   for (let da = -0.12; da <= 0.12; da += 0.002) {
     const ang = base + da;
     const v = m.planShot(p, { mode: 'manual', angle: ang, power }, true);
     const bb = makeBall(); Object.assign(bb, { x: b.x, y: BALL.r, z: b.z, vx: v.vx, vy: v.vy, vz: v.vz });
     const pr = predictPath(bb, 2, 1 / 60);
-    if (pr.goal === 1 && pr.events.some(e => e.type === 'wall') && !pr.events.some(e => e.type === 'post')) ok.push(ang);
+    const g = pr.events.find(e => e.type === 'goal');
+    if (!g || !pr.events.some(e => e.type === 'wall') || pr.events.some(e => e.type === 'post')) continue;
+    if (Math.abs(g.z) > COURT.goalHalfW - 0.3) continue;
+    const d = Math.abs(g.z - gk.z);
+    if (d > bestD) { bestD = d; best = ang; }
   }
-  return ok.length ? ok[Math.floor(ok.length / 2)] : null;
+  return best;
 }
 
 export function runDrill(v, tz, w, seed = 1, power = 0.95) {

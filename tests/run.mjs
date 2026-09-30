@@ -1,5 +1,5 @@
 // Headless test runner: `npm test`
-const suites = process.argv.slice(2).length ? process.argv.slice(2) : ['physics', 'gestures', 'match', 'drill'];
+const suites = process.argv.slice(2).length ? process.argv.slice(2) : ['physics', 'movement', 'gestures', 'match', 'drill'];
 let failed = 0;
 for (const s of suites) {
   let mod;

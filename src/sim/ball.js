@@ -39,6 +39,16 @@ function reflect(b, nx, ny, nz, e, et = e) {
   return -vn;
 }
 
+// A wall mirrors the ball's roll/topspin the same way it mirrors the velocity (the
+// spin tied to the normal component flips and scales by e, the rest by et), so a
+// ball that was rolling into the mesh leaves rolling along its new line instead of
+// curling off on the next bounce. nx/nz: the wall's horizontal normal.
+function mirrorSpin(b, nx, nz) {
+  if (nz !== 0) { b.wx *= -BALL.wallE; b.wz *= BALL.wallT; }
+  else { b.wz *= -BALL.wallE; b.wx *= BALL.wallT; }
+  b.wy *= 0.4;
+}
+
 // Sphere vs capsule segment (posts / crossbar).
 function collideSegment(b, ax, ay, az, bx, by, bz, ev, kind) {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
@@ -58,23 +68,46 @@ function collideSegment(b, ax, ay, az, bx, by, bz, ev, kind) {
   }
 }
 
+// Drag coefficient through the drag crisis: high below ~8 m/s, low above ~14 m/s.
+function dragK(sp) {
+  const t = Math.min(1, Math.max(0, (sp - BALL.crisisLo) / (BALL.crisisHi - BALL.crisisLo)));
+  return BALL.dragLow + (BALL.drag - BALL.dragLow) * t * t * (3 - 2 * t);
+}
+
+// Friction impulse J (per unit mass, ≤ jmax) at the ground contact, opposing the slip
+// of the contact point. The ball is a hollow shell (I = ⅔mR²), so an impulse J changes
+// the slip by 2.5·J: backspin checks a ball up, topspin makes it skid on, and a
+// spinless landing grips and starts to roll.
+function contactFriction(b, jmax) {
+  const sx = b.vx + b.wz * R, sz = b.vz - b.wx * R;
+  const sl = Math.hypot(sx, sz);
+  if (sl < 1e-6) return 0;
+  const J = Math.min(jmax, sl / 2.5);
+  const jx = -sx / sl * J, jz = -sz / sl * J;
+  b.vx += jx; b.vz += jz;
+  b.wz += 1.5 * jx / R; b.wx -= 1.5 * jz / R;
+  return sl - 2.5 * J;
+}
+
 function integrate(b, h, ev) {
   const grounded = b.y <= R + 1e-4 && Math.abs(b.vy) < BALL.bounceMinVy;
 
   if (grounded) {
-    // Rolling: constant + linear resistance, no Magnus.
     b.y = R; b.vy = 0;
+    // Skid until the contact point stops slipping, then roll.
+    const slip = contactFriction(b, BALL.slideMu * BALL.gravity * h);
+    // Rolling resistance: constant + linear, no Magnus.
     const sp = Math.hypot(b.vx, b.vz);
     if (sp > 0) {
       const dec = (BALL.rollDecel + BALL.rollLinear * sp) * h;
       const k = sp > dec ? (sp - dec) / sp : 0;
       b.vx *= k; b.vz *= k;
     }
-    const sd = Math.exp(-BALL.spinDecayGround * h);
-    b.wx *= sd; b.wy *= sd; b.wz *= sd;
+    if (slip < 0.05) { b.wx = b.vz / R; b.wz = -b.vx / R; }   // rolling: spin matches the roll
+    b.wy *= Math.exp(-BALL.spinDecayGround * h);            // side spin scrubs off quickly
   } else {
     const sp = Math.hypot(b.vx, b.vy, b.vz);
-    const kd = BALL.drag * sp;
+    const kd = dragK(sp) * sp;
     const S = BALL.magnus;
     // ω × v
     const mx = b.wy * b.vz - b.wz * b.vy;
@@ -96,8 +129,8 @@ function integrate(b, h, ev) {
       const vy = -b.vy;
       if (vy > BALL.bounceMinVy) {
         b.vy = vy * BALL.groundE;
-        b.vx *= BALL.groundGrip; b.vz *= BALL.groundGrip;
-        b.wx *= 0.7; b.wy *= 0.7; b.wz *= 0.7;
+        contactFriction(b, BALL.bounceMu * (1 + BALL.groundE) * vy);
+        b.wy *= 0.8;
         ev && ev.push({ type: 'bounce', x: b.x, y: 0, z: b.z, speed: vy });
       } else b.vy = 0;
     }
@@ -114,11 +147,13 @@ function integrate(b, h, ev) {
   if (b.z > halfW - R) {
     b.z = halfW - R;
     const imp = reflect(b, 0, 0, -1, BALL.wallE, BALL.wallT);
-    if (imp > 0.3) { b.wy *= 0.4; ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: halfW, nx: 0, nz: -1, speed: imp, board: b.y < boardH }); }
+    if (imp > 0) mirrorSpin(b, 0, -1);
+    if (imp > 0.3) { ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: halfW, nx: 0, nz: -1, speed: imp, board: b.y < boardH }); }
   } else if (b.z < -halfW + R) {
     b.z = -halfW + R;
     const imp = reflect(b, 0, 0, 1, BALL.wallE, BALL.wallT);
-    if (imp > 0.3) { b.wy *= 0.4; ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: -halfW, nx: 0, nz: 1, speed: imp, board: b.y < boardH }); }
+    if (imp > 0) mirrorSpin(b, 0, 1);
+    if (imp > 0.3) { ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: -halfW, nx: 0, nz: 1, speed: imp, board: b.y < boardH }); }
   }
 
   // --- end walls, goals, posts
@@ -151,7 +186,8 @@ function integrate(b, h, ev) {
       if (!inMouth) {
         b.x = s * (halfL - R);
         const imp = reflect(b, -s, 0, 0, BALL.wallE, BALL.wallT);
-        if (imp > 0.3) { b.wy *= 0.4; ev && ev.push({ type: 'wall', x: lineX, y: b.y, z: b.z, nx: -s, nz: 0, speed: imp, board: b.y < boardH }); }
+        if (imp > 0) mirrorSpin(b, -s, 0);
+        if (imp > 0.3) { ev && ev.push({ type: 'wall', x: lineX, y: b.y, z: b.z, nx: -s, nz: 0, speed: imp, board: b.y < boardH }); }
       }
     }
 

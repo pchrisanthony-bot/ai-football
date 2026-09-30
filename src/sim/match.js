@@ -2,7 +2,7 @@
 // Match: the whole simulation. Pure logic, fixed 120 Hz, no rendering.
 // The renderer and audio read `match` state and drain `match.events`.
 // =====================================================================
-import { SIM_DT, COURT, BALL, PLAYER, KICK, RULES, STYLE, TEAM_SIZE } from '../config.js';
+import { SIM_DT, COURT, BALL, PLAYER, KICK, RULES, STYLE, TEAM_SIZE, DRIB } from '../config.js';
 import { makeBall, stepBall, predictPath, copyBall } from './ball.js';
 import { makePlayer, movePlayer, separatePlayers, maxSpeed, TEAMS } from './players.js';
 import { groundPassSpeed, solveLob, solveStrike, rollTime } from './kicks.js';
@@ -13,6 +13,7 @@ const R = BALL.r;
 const TAU = Math.PI * 2;
 
 // Timed actions. contact = when the foot meets the ball; lock = movement speed multiplier.
+const STRIKES = new Set(['pass', 'through', 'lob', 'shot', 'volley', 'clear']);
 const ACTIONS = {
   pass:     { dur: 0.34, contact: KICK.passContact, lock: 0.55 },
   through:  { dur: 0.34, contact: KICK.passContact, lock: 0.55 },
@@ -146,15 +147,21 @@ export class Match {
 
     this.ai.update(dt);
 
+    const own = this.ball.owner;
+    const knocking = own && own.dribble.mode === 'knock';
     for (const p of this.players) {
       if (!p.active) continue;
       this.updateAction(p, dt);
       const a = p.action;
       let lock = a ? ACTIONS[a.type].lock : 1;
+      // A strike on a knocked-on ball: keep running onto it until the foot arrives.
+      if (knocking && p === own && a && !a.fired) lock = 1;
       if (p.stun > 0) lock = Math.min(lock, 0.15);
       if (p.closeControl) lock = Math.min(lock, 0.55);
       if (this.isGB(p.team)) lock *= 1.08;
+      if (knocking && p === own) this.steerToBall(p);
       if (!(a && ACTIONS[a.type].selfMove)) movePlayer(p, dt, lock);
+      p.steer = null;
     }
     separatePlayers(this.players);
     this.updateBall(dt);
@@ -188,6 +195,7 @@ export class Match {
     p.dribble.f = clamp(rx * fx + rz * fz, 0.3, 1.2);
     p.dribble.lat = -rx * fz + rz * fx;
     p.dribble.u = 0;
+    p.dribble.mode = 'slot';
     if (!silent) this.emit({ type: 'control', pid: p.id, team: p.team, prevTeam: prev ? prev.team : -1 });
   }
 
@@ -205,7 +213,15 @@ export class Match {
       return;
     }
     const a = p.action;
+    if (a && !a.fired && STRIKES.has(a.type)) {
+      // Winding up: the player plants beside the ball and strikes it where it is —
+      // it doesn't swing round as he turns into the shot (so the aim preview is true).
+      b.x += p.vx * dt; b.z += p.vz * dt; b.vx = p.vx; b.vz = p.vz; b.y = R; b.vy = 0;
+      return;
+    }
     const close = p.closeControl || (a && ACTIONS[a.type].holdBall);
+    if (!close && !a && this.phase === 'play' && p.speed > DRIB.knockMin - 0.4 && p.move.speed > DRIB.knockMin
+        && Math.hypot(b.x - p.x, b.z - p.z) < 1.1) { this.knockTouch(p); return; }
     const ctl = p.attrs.control;
     const minF = close ? 0.34 : 0.42;
     if (p.speed > 1.2 && !close) {
@@ -242,11 +258,109 @@ export class Match {
     b.inHands = false;
   }
 
+  // ---- knock-on dribbling (the ball rolls free between touches)
+  knockTouch(p, heavy = 1) {
+    const b = this.ball, d = p.dribble, mv = p.move;
+    const ml = Math.hypot(mv.x, mv.z);
+    const hx = Math.cos(p.heading), hz = Math.sin(p.heading);
+    const dx = ml > 0.01 ? mv.x / ml : hx, dz = ml > 0.01 ? mv.z / ml : hz;
+    const cosA = dx * hx + dz * hz;
+    const s = Math.min(1, p.speed / PLAYER.sprint), ctl = p.attrs.control;
+    // How far the touch runs ahead of the stride: longer at pace, shorter with good feet.
+    let lead = (0.15 + 0.78 * s * s) * (1.25 - 0.45 * ctl) * (p.sprinting ? 1.12 : 1) * heavy;
+    let base = Math.max(0, p.speed * cosA);
+    if (cosA < 0.4) {
+      // A cut: a small touch across the body. Planting to do it costs pace.
+      lead = 0.3; base = p.speed * 0.35 + 1.0; p.speed *= 0.72;
+    }
+    const v = base + Math.sqrt(2 * (BALL.rollDecel + BALL.rollLinear * (base + 1.5)) * lead);
+    b.vx = dx * v; b.vz = dz * v; b.vy = 0; b.y = R;
+    b.wx = b.vz / R; b.wz = -b.vx / R; b.wy = 0;          // struck along the ground: rolling spin
+    d.mode = 'knock'; d.lastT = this.time; d.u = 0;
+    b.lastTouch = p;
+    this.emit({ type: 'touch', pid: p.id, power: s });
+  }
+
+  // Run onto a knocked-on ball; the stick's direction is applied at the next touch.
+  steerToBall(p) {
+    const b = this.ball, mv = p.move;
+    const tx = b.x + b.vx * 0.12, tz = b.z + b.vz * 0.12;
+    const dx = tx - p.x, dz = tz - p.z, d = Math.hypot(dx, dz);
+    if (d < 0.2) return;
+    p.steer = { x: dx / d, z: dz / d, speed: Math.max(mv.speed, Math.min(PLAYER.jog, d * 3)) };
+  }
+
+  knockDribble(p, dt) {
+    const b = this.ball, d = p.dribble;
+    const ev = [];
+    stepBall(b, dt, ev);
+    for (const e of ev) {
+      if (e.type === 'goal') { this.loseBall(); b.lastTouch = p; }   // dribbled it in
+      this.onBallEvent(e);
+    }
+    if (b.owner !== p) return;
+    const dx = b.x - p.x, dz = b.z - p.z, dist = Math.hypot(dx, dz);
+    // A defender who gets a foot to the free ball before the dribbler can nick it.
+    for (const q of this.players) {
+      if (q.team === p.team || !q.active || q.stun > 0 || q.noTouch > 0 || q.frozen || (q.action && q.action.ghost)) continue;
+      const dq = Math.hypot(b.x - q.x, b.z - q.z);
+      if (dq > DRIB.steal || dq > dist - 0.05 || b.y > 0.7) continue;
+      const win = 0.4 + 0.45 * q.attrs.tackle - 0.35 * p.attrs.control + (q.jockey ? 0.1 : 0);
+      this.loseBall();
+      if (q.role === 'GK' || this.rand() < win) {
+        this.gainPossession(q);
+        this.teams[q.team].stats.tackles++;
+        this.emit({ type: 'tackle', ok: true, pid: q.id, victim: p.id, x: b.x, z: b.z });
+      } else {
+        const ang = Math.atan2(b.z - q.z, b.x - q.x) + (this.rand() - 0.5) * 1.2;
+        const sp = 2.5 + Math.hypot(b.vx, b.vz) * 0.4;
+        b.vx = Math.cos(ang) * sp; b.vz = Math.sin(ang) * sp; b.vy = 0.5;
+        b.lastTouch = q; q.noTouch = 0.2; p.noTouch = 0.15; b.redirectT = this.time;
+        this.emit({ type: 'deflect', pid: q.id, x: b.x, y: b.y, z: b.z, speed: sp });
+      }
+      return;
+    }
+    if (dist > DRIB.lose) { this.loseBall(); b.lastTouch = p; return; }
+    const a = p.action;
+    // Close control, a skill, or a stoppage: settle it back at the feet.
+    if ((p.closeControl || (a && ACTIONS[a.type].holdBall) || this.phase !== 'play') && dist < 0.9) { this.settle(p); return; }
+    const hx = Math.cos(p.heading), hz = Math.sin(p.heading);
+    const f = dx * hx + dz * hz, lat = -dx * hz + dz * hx;
+    if (a && !a.fired) {
+      // A strike is coming: the player stretches to meet it.
+      const k = 1 - Math.exp(-5 * dt);
+      const sx = p.x + Math.cos(p.facing) * 0.45, sz = p.z + Math.sin(p.facing) * 0.45;
+      b.x += (sx - b.x) * k; b.z += (sz - b.z) * k;
+      return;
+    }
+    // Wanting to cut: he lunges a stride to get a foot on it rather than waiting for
+    // the ball to come back into his stride.
+    const ml = Math.hypot(p.move.x, p.move.z);
+    const cut = ml > 0.01 && (p.move.x * hx + p.move.z * hz) / ml < 0.77;
+    const inReach = f > -0.2 && f < DRIB.reach + (cut ? DRIB.lunge : 0) && Math.abs(lat) < 0.55 && b.y < 0.5;
+    if (!inReach || this.time - d.lastT < DRIB.touchGap) return;
+    if (p.move.speed < DRIB.knockMin * 0.75 || p.speed < 2.2) this.settle(p);    // trap it
+    else this.knockTouch(p);
+  }
+
+  // Back to the feet (slot dribbling): a trap or a settle.
+  settle(p) {
+    const b = this.ball, d = p.dribble;
+    const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
+    const rx = b.x - p.x, rz = b.z - p.z;
+    d.mode = 'slot'; d.u = 0;
+    d.f = clamp(rx * fx + rz * fz, 0.3, 1.2);
+    d.lat = clamp(-rx * fz + rz * fx, -0.5, 0.5);
+    b.lastTouch = p;
+    this.emit({ type: 'touch', pid: p.id, power: 0.1 });
+  }
+
   // ------------------------------------------------------------------ ball update & interactions
   updateBall(dt) {
     const b = this.ball;
     if (b.owner) {
-      this.dribble(b.owner, dt);
+      if (b.owner.dribble.mode === 'knock' && !b.inHands) this.knockDribble(b.owner, dt);
+      else this.dribble(b.owner, dt);
       return;
     }
     const ev = [];
@@ -292,7 +406,14 @@ export class Match {
       const rel = Math.hypot(rvx, rvz, b.vy * 0.5);
       if (b.y < 0.6 && hd < PLAYER.controlRadius) {
         const ctlMax = 8 + 9 * p.attrs.control;
-        if (rel < ctlMax || (b.passTo === p && rel < ctlMax + 4)) { this.gainPossession(p); return; }
+        if (rel < ctlMax || (b.passTo === p && rel < ctlMax + 4)) {
+          this.gainPossession(p);
+          // Receiving on the move: the first touch goes into space where he's heading
+          // (heavier when the pass was hot and the feet aren't great).
+          if (!p.closeControl && p.speed > DRIB.knockMin - 0.6 && p.move.speed > DRIB.knockMin)
+            this.knockTouch(p, 1 + clamp((rel - 6) / 10, 0, 0.8) * (1.2 - p.attrs.control));
+          return;
+        }
         // Heavy touch: it bounces off the shin.
         const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
         b.vx = b.vx * 0.28 + fx * 2.2 + p.vx * 0.5; b.vz = b.vz * 0.28 + fz * 2.2 + p.vz * 0.5;
@@ -353,11 +474,13 @@ export class Match {
     let reach = 0.75, maxH = 2.35;
     let bodyDist = hd;
     if (a && a.type === 'dive') {
-      // Stretched body: a segment from the feet toward the dive direction that
+      // Stretched body: a segment from the hips toward the dive direction that
       // EXTENDS over ~0.3 s — a keeper can't be full length the instant he reacts.
+      // The hips themselves travel with the dive (~1.7 m), so the segment is only
+      // the torso and arms: fingertip reach ends up ≈ 3.2 m from where he stood.
       if (a.t < 0.03 || a.t > 0.8) return false;
       const ext = smooth(clamp((a.t - 0.03) / 0.3, 0, 1));
-      const len = 0.35 + 1.2 * ext;
+      const len = 0.3 + 0.82 * ext;
       const ex = p.x + a.dx * len, ez = p.z + a.dz * len;
       const dx = ex - p.x, dz = ez - p.z, l2 = dx * dx + dz * dz;
       const t = clamp(((b.x - p.x) * dx + (b.z - p.z) * dz) / l2, 0, 1);
@@ -459,6 +582,14 @@ export class Match {
   startAction(p, type, params = {}) {
     const def = ACTIONS[type];
     p.action = { type, t: 0, dur: params.dur ?? def.dur, contact: params.contact ?? def.contact, fired: false, ghost: !!def.ghost, ...params };
+    const b = this.ball;
+    if (b.owner === p && p.dribble.mode === 'knock' && def.contact < 1) {
+      // The ball is a stride ahead: time the strike for when the foot gets there.
+      const gap = Math.hypot(b.x - p.x, b.z - p.z) - 0.5;
+      const along = b.vx * Math.cos(p.heading) + b.vz * Math.sin(p.heading);
+      const extra = gap > 0 ? clamp(gap / Math.max(1.5, p.speed - along + 1.5), 0, 0.35) : 0;
+      p.action.contact += extra; p.action.dur += extra;
+    }
     if (['pass', 'through', 'lob', 'shot', 'volley', 'clear', 'throw'].includes(type)) this.emit({ type: 'windup', pid: p.id, kind: type });
     return p.action;
   }
@@ -571,10 +702,10 @@ export class Match {
       b.y = 0.5;
       v = { vx: (a.target.x - b.x) / d * s, vy: 0.6, vz: (a.target.z - b.z) / d * s, wy: 0 };
     } else if (a.type === 'lob' || a.type === 'clear') {
-      const L = solveLob(b.x, Math.max(b.y, R), b.z, a.target.x, a.target.z, a.type === 'clear' ? 0.5 : 0.58);
+      const L = solveLob(b.x, Math.max(b.y, R), b.z, a.target.x, a.target.z, a.type === 'clear' ? 0.5 : 0.58, a.type === 'clear' ? KICK.lobSpin * 0.5 : KICK.lobSpin);
       const e = (1 - p.attrs.pass) * 0.06;
       const ang = noise(e), c = Math.cos(ang), s = Math.sin(ang);
-      v = { vx: L.vx * c - L.vz * s, vy: L.vy * (1 + noise(e)), vz: L.vx * s + L.vz * c, wy: 0 };
+      v = { vx: L.vx * c - L.vz * s, vy: L.vy * (1 + noise(e)), vz: L.vx * s + L.vz * c, wx: L.wx * c - L.wz * s, wy: 0, wz: L.wx * s + L.wz * c };
       if (a.type === 'lob') T.stats.passes++;          // clearances aren't passes
     } else if (a.angle != null) {
       // Played at an explicit angle (wall pass off the cage).
@@ -595,7 +726,9 @@ export class Match {
     }
 
     b.vx = v.vx; b.vy = v.vy; b.vz = v.vz;
-    b.wx = 0; b.wy = v.wy || 0; b.wz = 0;
+    b.wx = v.wx || 0; b.wy = v.wy || 0; b.wz = v.wz || 0;
+    // Passes along the ground are struck through the middle: they leave rolling, not skidding.
+    if (v.vy === 0 && !v.wx && !v.wz) { b.wx = b.vz / R; b.wz = -b.vx / R; }
     if (b.y < R) b.y = R;
     b.lastTouch = p;
     b.lastKick = { pid: p.id, team: p.team, kind: a.type === 'volley' ? 'shot' : a.type === 'shot' ? 'shot' : a.type, t: this.time, power: a.aim?.power ?? 0.5 };
@@ -652,9 +785,10 @@ export class Match {
       return { vx: Math.cos(aim.angle) * speed, vy, vz: Math.sin(aim.angle) * speed, wy: 0 };
     }
     if (aim.chip) {
+      // Scooped under the ball: heavy backspin floats it and checks it on landing.
       speed = 10 + 5 * power;
-      const s = solveStrike(start, gx, 1.55, aim.tz, speed, { iters: 5 });
-      return { vx: s.vx, vy: s.vy, vz: s.vz, wy: 0 };
+      const s = solveStrike(start, gx, 1.55, aim.tz, speed, { iters: 5, bs: KICK.chipSpin });
+      return { vx: s.vx, vy: s.vy, vz: s.vz, wx: s.wx, wy: 0, wz: s.wz };
     }
     if (aim.finesse) {
       speed *= KICK.finessePower;

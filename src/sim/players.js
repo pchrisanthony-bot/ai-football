@@ -51,7 +51,7 @@ export function makePlayer(teamIdx, slot, teamDef, seedSkin) {
     human: false, active: true,
     action: null,                      // current timed action (kick, tackle, skill, dive, …)
     stun: 0, noTouch: 0, possessT: 0, closeControl: false, jockey: false,
-    dribble: { f: 0.45, u: 0, lat: 0 },
+    dribble: { f: 0.45, u: 0, lat: 0, mode: 'slot', lastT: -9 },
     ai: { state: 'IDLE', pending: null, pendingT: 0, thinkT: Math.random() * 0.2, label: '', why: '', target: null, commitT: 0 },
   };
 }
@@ -67,26 +67,60 @@ function lookFor(team, slot, seed = 0) {
 
 export const maxSpeed = (p, sprint) => (sprint ? PLAYER.sprint : PLAYER.jog) * (0.82 + 0.22 * p.attrs.pace) * (sprint ? 0.75 + 0.25 * p.stamina : 1);
 
-// Kinematic movement: tapered acceleration, hard deceleration, turn rate that
-// falls with speed. Returns nothing; mutates p.
-export function movePlayer(p, dt, lockMove = 1) {
-  const m = p.move;
-  const want = Math.hypot(m.x, m.z) > 0.01 && m.speed > 0.05;
-  const vmax = m.speed * lockMove;
+// Acceleration profiles (FC's AcceleRATE idea): explosive players have a big first
+// step that tails off; lengthy ones start slower but keep pulling toward top speed.
+const PROFILE = {
+  Speedster: { a: 1.14, n: 1.0 }, Trickster: { a: 1.10, n: 1.0 },
+  Playmaker: { a: 1.0, n: 1.3 },  Finisher: { a: 1.0, n: 1.3 },
+  Enforcer:  { a: 0.86, n: 1.9 }, Keeper: { a: 0.95, n: 1.2 },
+};
+// How sharply a player can turn and stop (tricksters cut, enforcers lumber).
+const agilityOf = p => 0.82 + 0.18 * p.attrs.control + 0.14 * p.attrs.skill - 0.1 * p.attrs.strength;
 
-  if (want) {
-    const target = Math.atan2(m.z, m.x);
-    const turnRate = PLAYER.turnSlow + (PLAYER.turnFast - PLAYER.turnSlow) * clamp(p.speed / PLAYER.sprint, 0, 1);
-    const diff = Math.abs(wrapAngle(target - p.heading));
-    // Sharp cut at pace: bleed speed first (plant & cut), then turn.
-    if (diff > 1.9 && p.speed > 3.2) p.speed = Math.max(0, p.speed - PLAYER.decel * 0.9 * dt);
-    p.heading = p.speed < 0.6 ? target : rotateTowards(p.heading, target, turnRate * dt);
-    const acc = PLAYER.accel * (0.7 + 0.45 * p.attrs.accel);
-    if (p.speed > vmax) p.speed = Math.max(vmax, p.speed - PLAYER.decel * dt);
-    else p.speed = Math.min(vmax, p.speed + acc * Math.max(0.12, 1 - p.speed / Math.max(vmax, 0.1)) * dt);
-  } else {
-    p.speed = Math.max(0, p.speed - PLAYER.decel * dt);
-  }
+// Momentum locomotion. The player's velocity is a vector; each tick it moves toward
+// the wanted velocity limited by propulsion (tapering with speed), braking, and
+// sideways grip, all inside one friction circle. Turning at pace therefore costs
+// speed — a 90° cut at a sprint brakes into a plant — while slow turns stay crisp.
+// p.heading/p.speed stay the source of truth, so actions can still set them directly.
+export function movePlayer(p, dt, lockMove = 1) {
+  const m = p.steer || p.move;     // steer: a one-tick override (running onto a knocked-on ball)
+  const mag = Math.hypot(m.x, m.z);
+  const want = mag > 0.01 && m.speed > 0.05;
+  const vmax = want ? m.speed * lockMove : 0;
+  const dx = want ? m.x / mag : 0, dz = want ? m.z / mag : 0;
+
+  const sp = p.speed;
+  // Current direction of travel (or the wanted one when standing still).
+  let ux = Math.cos(p.heading), uz = Math.sin(p.heading);
+  if (sp < 0.35 && want) { ux = dx; uz = dz; }
+  const vdx = dx * vmax, vdz = dz * vmax;
+  const along = vdx * ux + vdz * uz;          // wanted speed along the run
+  const lat = -vdx * uz + vdz * ux;           // wanted sideways speed
+
+  const ag = agilityOf(p);
+  const top = PLAYER.sprint * (0.82 + 0.22 * p.attrs.pace);
+  const prof = PROFILE[p.arch] || PROFILE.Playmaker;
+  const r = Math.min(1, sp / top);
+  const aF = PLAYER.accel * prof.a * (0.8 + 0.35 * p.attrs.accel) * Math.max(0.1, 1 - Math.pow(r, prof.n));
+  const aB = PLAYER.brake * ag;
+  const aL = (PLAYER.gripSlow + (PLAYER.grip - PLAYER.gripSlow) * r) * ag;
+
+  // Along the run: accelerate or brake toward the wanted speed (never below zero —
+  // reversing means stopping first).
+  const tgt = Math.max(0, along);
+  let dv = tgt > sp ? Math.min(tgt - sp, aF * dt) : -Math.min(sp - tgt, aB * dt);
+  // Sideways: build lateral velocity (this is what turns the run).
+  let dl = Math.max(-aL * dt, Math.min(aL * dt, lat));
+  // Friction circle: total acceleration can't exceed what the studs can hold.
+  const cap = PLAYER.gripMax * ag * dt, tot = Math.hypot(dv, dl);
+  if (tot > cap) { dv *= cap / tot; dl *= cap / tot; }
+
+  let vx = ux * (sp + dv) - uz * dl, vz = uz * (sp + dv) + ux * dl;
+  let ns = Math.hypot(vx, vz);
+  if (ns > 0.02) p.heading = Math.atan2(vz, vx);
+  else if (want) p.heading = Math.atan2(dz, dx);
+  if (!want && ns < 0.05) { ns = 0; vx = vz = 0; }
+  p.speed = ns;
 
   p.vx = Math.cos(p.heading) * p.speed;
   p.vz = Math.sin(p.heading) * p.speed;
@@ -105,12 +139,23 @@ export function movePlayer(p, dt, lockMove = 1) {
     const f = Math.atan2(p.faceTarget.z - p.z, p.faceTarget.x - p.x);
     p.facing = rotateTowards(p.facing, f, 14 * dt);
   } else if (p.speed > 0.4) {
-    p.facing = rotateTowards(p.facing, p.heading, 18 * dt);
+    p.facing = rotateTowards(p.facing, p.heading, 14 * dt);
+  } else if (want) {
+    p.facing = rotateTowards(p.facing, Math.atan2(dz, dx), 10 * dt);   // turn on the spot
   }
 
   // Stamina.
   if (p.sprinting && p.speed > PLAYER.jog) p.stamina = Math.max(0, p.stamina - PLAYER.staminaDrain * dt);
   else p.stamina = Math.min(1, p.stamina + PLAYER.staminaRegen * dt);
+}
+
+// Add a velocity change to a player, keeping heading/speed (the source of truth) in step.
+function bump(p, dvx, dvz) {
+  const vx = p.vx + dvx, vz = p.vz + dvz, sp = Math.hypot(vx, vz);
+  // A shove slows the run and nudges its line; it never turns someone round.
+  if (sp > 0.05 && (vx * p.vx + vz * p.vz) > 0) { p.heading = Math.atan2(vz, vx); p.speed = sp; }
+  else p.speed = Math.max(0, p.speed - Math.hypot(dvx, dvz));
+  p.vx = Math.cos(p.heading) * p.speed; p.vz = Math.sin(p.heading) * p.speed;
 }
 
 // Circle-vs-circle body separation, weighted by strength (the Enforcer shoves).
@@ -130,6 +175,14 @@ export function separatePlayers(players) {
       const wa = b.attrs.strength / (a.attrs.strength + b.attrs.strength);
       a.x -= nx * pen * wa; a.z -= nz * pen * wa;
       b.x += nx * pen * (1 - wa); b.z += nz * pen * (1 - wa);
+      // Momentum: running into someone costs the closing speed, shared by strength
+      // (a shoulder from the Enforcer stops a trickster; the other way round, it doesn't).
+      const vn = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+      if (vn < 0) {
+        const j = -vn * 0.8;
+        bump(a, -nx * j * wa, -nz * j * wa);
+        bump(b, nx * j * (1 - wa), nz * j * (1 - wa));
+      }
     }
   }
 }

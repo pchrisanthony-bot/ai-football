@@ -239,7 +239,15 @@ export class AIDirector {
       if (fd.dist > 1.3) choices.push(['rainbow', sk * 0.2 - 0.08]);
       for (const [name, u] of choices) opts.push({ kind: 'skill', name, u: u + (drib ? Math.max(0, drib.u) * 0.3 : 0), label: name.toUpperCase() });
     }
-    if (press < 1.3) opts.push({ kind: 'shield', u: 0.02, label: 'SHIELD' });
+    // Shielding buys a moment, not a strategy: it gets less attractive the longer it
+    // lasts, and a turn out of it (roulette / drag-back) gets more attractive.
+    const shieldT = ai.shieldAt != null ? m.time - ai.shieldAt : 0;
+    if (press < 1.3) opts.push({ kind: 'shield', u: 0.02 - 0.05 * shieldT, label: 'SHIELD' });
+    if (shieldT > 0.8 && (ai.skillCD || 0) <= 0) {
+      const sk = p.attrs.skill;
+      opts.push({ kind: 'skill', name: 'roulette', u: 0.04 + sk * 0.12 + 0.04 * shieldT, label: 'ROULETTE' });
+      opts.push({ kind: 'skill', name: 'dragback', u: 0.03 + sk * 0.08 + 0.04 * shieldT, label: 'DRAG BACK' });
+    }
 
     // Decision noise scales with difficulty (lower difficulty = sloppier choices).
     const noise = 0.1 * (1 - this.diff);
@@ -256,6 +264,8 @@ export class AIDirector {
     ai.why = best.label;
     ai.plan = best;
     p.closeControl = false;
+    if (best.kind === 'shield') { if (ai.shieldAt == null) ai.shieldAt = m.time; }
+    else ai.shieldAt = null;
     switch (best.kind) {
       case 'shoot': {
         const aim = best.bank
@@ -337,7 +347,16 @@ export class AIDirector {
         const gx = g.x - o.x, gz = g.z - o.z, gl = Math.hypot(gx, gz) || 1;
         const dist = Math.hypot(o.x - p.x, o.z - p.z);
         const standoff = 1.05;
-        const tx = o.x + gx / gl * standoff + o.vx * 0.15, tz = o.z + gz / gl * standoff + o.vz * 0.15;
+        let tx = o.x + gx / gl * standoff + o.vx * 0.15, tz = o.z + gz / gl * standoff + o.vz * 0.15;
+        // Tight press time builds patience into commitment.
+        ai.pressT = dist < 1.8 ? (ai.pressT || 0) + dt : 0;
+        if (o.closeControl && dist < 2.2) {
+          // He's shielding: work round his body to the ball side instead of waiting.
+          const bx = b.x - o.x, bz = b.z - o.z, bl = Math.hypot(bx, bz) || 1;
+          const side = ((p.x - o.x) * -bz + (p.z - o.z) * bx) >= 0 ? 1 : -1;
+          tx = b.x + (-bz / bl * side) * 0.55 + (bx / bl) * 0.15;
+          tz = b.z + (bx / bl * side) * 0.55 + (bz / bl) * 0.15;
+        }
         if (dist < 3.2) { p.jockey = true; p.faceTarget = { x: b.x, z: b.z }; }
         p.sprinting = dist > 3;
         const sp = maxSpeed(p, dist > 3) * (0.75 + 0.3 * d);
@@ -345,8 +364,8 @@ export class AIDirector {
         // Tackle when the ball is exposed or on a timer scaled by difficulty.
         const bd = Math.hypot(b.x - p.x, b.z - p.z);
         const exposed = Math.hypot(b.x - o.x, b.z - o.z) > 0.62;
-        if (bd < 1.25 && !p.action && p.stun <= 0) {
-          const rate = (exposed ? 3.5 : 0.8) * (0.4 + 0.9 * d);
+        if ((bd < 1.25 || (dist < 1.3 && ai.pressT > 1.2)) && !p.action && p.stun <= 0) {
+          const rate = (exposed ? 3.5 : 0.8) * (0.4 + 0.9 * d) * (1 + Math.max(0, ai.pressT - 1));
           if (Math.random() < rate * dt) m.requestTackle(p);
         }
         // Last-ditch slide when the carrier is getting away toward goal.
@@ -495,6 +514,9 @@ export class AIDirector {
     }
     const onTarget = pred.goal === -dir || (cross && Math.abs(cross.z) < COURT.goalHalfW + 0.3 && cross.y < COURT.goalH + 0.2);
     if (!onTarget || !cross) return false;
+    // A keeper reads the line the ball is on, not the physics engine: if it's going
+    // to hit the cage first, he can't know the rebound until he's seen it.
+    if (pred.events.some(e => (e.type === 'wall' || e.type === 'post') && e.t < cross.t)) return false;
     // Reaction time: difficulty + keeping, slower against a GAMEBREAKER team.
     // Deflections and cage rebounds are notoriously hard for keepers: he's already
     // moving for the original line, so the re-read costs an extra beat.
@@ -503,15 +525,32 @@ export class AIDirector {
     const since = m.time - (t0 > 0 ? t0 : m.time);
     ai.label = 'SET';
     if (since < react) { this.stop(p); return true; }
-    const lateral = cross.z - p.z;
+    // Keepers read a rebound off the mesh like a mirror bounce, but the cage sends it
+    // off flatter (tan θ' = (et/e)·tan θ), so it arrives nearer the wall side than he
+    // expects. Better keepers (and higher difficulty) misread it less.
+    let readZ = cross.z;
+    if (redirected && b.wallHits > 0) {
+      const err = (0.75 - 0.3 * this.diff) * (1.2 - 0.6 * p.attrs.keeping);
+      readZ += Math.sign(b.vz || 1) * err;
+    }
+    const lateral = readZ - p.z;
     if (Math.abs(lateral) < 0.45 && cross.y < 1.9) {
       // Right at him: shuffle across and let the hands do it.
-      this.goTo(p, p.x, cross.z, 4, 0.02);
+      this.goTo(p, p.x, readZ, 4, 0.02);
+      return true;
+    }
+    // Don't commit early: a keeper who dives with the ball still 0.7 s out is on the
+    // floor when it arrives. Shuffle across, get set, and dive when it's close.
+    const diveAt = 0.34 + Math.min(0.22, Math.abs(lateral) * 0.09);
+    if (cross.t > diveAt && Math.abs(lateral) < 3.2) {
+      this.goTo(p, p.x, readZ, 3.2, 0.05);
       return true;
     }
     if (Math.abs(lateral) < 3.2 && cross.t > 0.05) {
       ai.diveFor = key;
-      m.requestDive(p, p.x - dir * 0.1, cross.z + Math.sign(lateral) * 0.25, cross.y > 1.1, redirected ? 0.8 : 1);
+      // Caught still moving across: the push-off is weaker.
+      const planted = p.speed < 1.2 ? 1 : 0.88;
+      m.requestDive(p, p.x - dir * 0.1, readZ + Math.sign(lateral) * 0.25, cross.y > 1.1, (redirected ? 0.8 : 1) * planted);
       ai.state = 'DIVE'; ai.label = 'DIVE';
       return true;
     }

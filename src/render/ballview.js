@@ -41,14 +41,23 @@ export class BallView {
 
   update(dt, b, camera) {
     this.mesh.position.set(b.x, b.y, b.z);
-    // Rolling: rotate about (up × v) by |v|·dt / r, plus visible side spin.
-    const vx = b.vx, vz = b.vz, sp = Math.hypot(vx, vz);
-    if (sp > 0.01) {
-      this.axis.set(vz, 0, -vx).normalize();
-      this.q.setFromAxisAngle(this.axis, (sp * dt) / BALL.r);
+    // Spin: the free ball carries a real spin vector (backspin on a chip, topspin off
+    // a bounce, curl on a finesse shot) — show exactly that. A ball held at the feet
+    // just rolls with its motion.
+    const free = !b.owner || (b.owner.dribble && b.owner.dribble.mode === 'knock');
+    const w = Math.hypot(b.wx, b.wy, b.wz);
+    if (free && w > 0.5) {
+      this.axis.set(b.wx / w, b.wy / w, b.wz / w);
+      this.q.setFromAxisAngle(this.axis, w * dt);
       this.mesh.quaternion.premultiply(this.q);
+    } else {
+      const vx = b.vx, vz = b.vz, sp = Math.hypot(vx, vz);
+      if (sp > 0.01) {
+        this.axis.set(vz, 0, -vx).normalize();
+        this.q.setFromAxisAngle(this.axis, (sp * dt) / BALL.r);
+        this.mesh.quaternion.premultiply(this.q);
+      }
     }
-    if (Math.abs(b.wy) > 1) { this.q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), b.wy * dt * 0.6); this.mesh.quaternion.premultiply(this.q); }
     // blob shadow: shrinks and fades with height
     const h = Math.max(0, b.y - BALL.r);
     const s = 0.34 + h * 0.12;

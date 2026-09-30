@@ -108,7 +108,7 @@ for (const [label, sx, sz, tz, wallSide] of [
 
 // 9. Rolling pass at 12 m/s travels a sensible distance (10–25 m) before stopping.
 {
-  const b = makeBall(); b.x = -15; b.vx = 12;
+  const b = makeBall(); b.x = -15; b.vx = 12; b.wz = -12 / R;   // struck through the middle: rolling
   run(b, 8);
   check('12 m/s pass rolls 15–22 m', b.x + 15 > 15 && b.x + 15 < 22 && b.vx === 0, `travelled ${(b.x + 15).toFixed(1)} m`);
 }
@@ -120,6 +120,32 @@ for (const [label, sx, sz, tz, wallSide] of [
   const firstBounce = ev.find(e => e.type === 'bounce');
   check('lob lands 12–20 m out, under the roof', firstBounce && firstBounce.x + 10 > 12 && firstBounce.x + 10 < 20 && !ev.some(e => e.type === 'roof'),
     `first bounce at ${(firstBounce?.x + 10).toFixed(1)} m`);
+}
+
+// 11. Spin at the bounce: backspin checks a chip up, topspin skids it on.
+{
+  const land = (wz) => {
+    const b = makeBall(); b.x = -10; b.y = 2; b.vx = 9; b.vy = -6; b.wz = wz;
+    const ev = [];
+    let after = null;
+    for (let t = 0; t < 2 && after === null; t += 1 / 120) { stepBall(b, 1 / 120, ev); if (ev.some(e => e.type === 'bounce')) after = b.vx; }
+    return after;
+  };
+  const back = land(40), none = land(0), top = land(-40);
+  check('backspin checks up on landing, topspin skids on', back < none && none < top && back < 6, `vx after bounce: backspin ${back.toFixed(1)}, none ${none.toFixed(1)}, topspin ${top.toFixed(1)} (in 9.0)`);
+}
+// 12. A ball landing without spin grips and ends up rolling (spin matches the roll).
+{
+  const b = makeBall(); b.x = -10; b.y = 0.6; b.vx = 8;
+  run(b, 1.2);
+  const slip = Math.abs(b.vx + b.wz * R);
+  check('a spinless landing grips into a true roll', slip < 0.1 && b.vx > 2, `vx ${b.vx.toFixed(2)}, slip ${slip.toFixed(3)} m/s`);
+}
+// 13. Drag crisis: a slow ball loses a bigger share of its speed in the air than a fast one.
+{
+  const lossPerMetre = (v) => { const b = makeBall(); b.x = -15; b.y = 3; b.vx = v; b.vy = 0; const h = 1 / 240; const x0 = b.x; for (let i = 0; i < 12; i++) stepBall(b, h); return (1 - b.vx / v) / (b.x - x0); };
+  const slow = lossPerMetre(7), fast = lossPerMetre(28);
+  check('drag crisis: slow balls die, hard shots carry', slow > fast * 1.4, `speed lost per metre: 7 m/s ${(slow * 100).toFixed(2)}%, 28 m/s ${(fast * 100).toFixed(2)}%`);
 }
 
 export default results;

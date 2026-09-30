@@ -19,7 +19,7 @@ Then open http://localhost:5173. A gamepad (Xbox or PlayStation layout) works to
 npm test
 ```
 
-`npm test` runs the headless checks: ball physics, full AI-vs-AI matches, and the trick-shot drill against the real keeper AI.
+`npm test` runs the headless checks: ball physics, player movement and dribbling, touch gestures, full AI-vs-AI matches, and the trick-shot drill against the real keeper AI.
 
 ## Online leaderboards (Supabase)
 Set a **PLAYER TAG** on the title screen. Finished matches and trick-shot drill runs are then posted to **LEADERBOARDS**, which show top players, the best drill runs and the latest results.
@@ -94,6 +94,11 @@ Compare this with `ChintanTrivedi/DeepGamingAI_FIFA` (see `PLAN.md`), which lear
 ### Physics notes
 - **Cage walls** use the research-validated restitution e = 0.70 on the **normal** component of the ball's velocity, with light friction along the wall. A 30 m/s strike keeps about 84% of its pace through a bank. This is why the bank is a weapon.
 - **The AI aims banks in closed form.** For a rebound, tan θ′ = (e_t/e)·tan θ, which gives the bounce point exactly: L = d₁·tan θ + d₂·(e_t/e)·tan θ. The strike solver then refines the aim against the real integrator, so the AI's aim, the human's aim preview and the actual ball flight all come from the same physics.
+- **Spin is real.** The ball carries a full spin vector. On each bounce, friction at the contact point trades spin for speed (the ball is modelled as a hollow shell, I = ⅔mR²). A backspun chip checks up, topspin skids on, and a spinless ball grips and then rolls. Walls mirror the spin as well as the velocity, so banks stay precise.
+- **Drag crisis.** Drag drops from Cd ≈ 0.4 to ≈ 0.22 between 8 and 14 m/s. Slow floated balls die, and hard shots carry and then dip as they slow.
+- **Players have momentum.** Velocity is a vector, limited by propulsion (which tapers toward top speed), braking and sideways grip inside one friction circle. A 90° cut at full sprint brakes into a plant (0.4 s, 7.4 → 4.2 m/s) while a jogging cut stays sharp (0.2 s). Acceleration differs by archetype, so Speedsters are explosive and Enforcers build up. Collisions cost closing speed, weighted by strength.
+- **Knock-on dribbling.** At pace the ball is touched ahead and rolls free under real physics until the next touch. Turning means reaching the ball (or lunging for it) and touching it the new way. A heavy touch can be nicked by a defender. Close control (Space / JOCKEY hold) keeps it at the feet, and a first touch on the move goes into space.
+- **Keepers read what they can see.** A keeper tracks the ball's current line, not the physics engine, so he can't read a cage rebound until it happens. He also tends to misjudge it as a mirror bounce, when the mesh actually sends it off flatter. He shuffles across, sets, and dives late.
 - **Graphics scale to the machine.** Quality auto-scales (LOW, MEDIUM, HIGH, ULTRA) from measured frame times, and you can set it manually under GRAPHICS in setup or pause.
 
 ### Deploying

@@ -51,18 +51,22 @@ export function crossPlaneX(pts, X, dt = 1 / 60) {
 }
 
 // Lofted ball: first bounce lands on (tx, tz). elev = vertical fraction of the launch direction.
-export function solveLob(bx, by, bz, tx, tz, elev = 0.55) {
+// Backspin of magnitude bs (rad/s) for a ball travelling along heading (hx, hz).
+export const backspin = (hx, hz, bs) => ({ wx: -hz * bs, wz: hx * bs });
+
+export function solveLob(bx, by, bz, tx, tz, elev = 0.55, bs = 0) {
   const dx = tx - bx, dz = tz - bz, d = Math.hypot(dx, dz) || 1;
   const hx = dx / d, hz = dz / d;
   const cosE = Math.sqrt(1 - elev * elev);
+  const w = backspin(hx, hz, bs);
   let lo = 3, hi = 30, best = null;
   for (let i = 0; i < 16; i++) {
     const s = (lo + hi) / 2;
-    const b = ballAt(bx, by, bz, hx * s * cosE, s * elev, hz * s * cosE);
+    const b = ballAt(bx, by, bz, hx * s * cosE, s * elev, hz * s * cosE, w.wx, 0, w.wz);
     const p = predictPath(b, 4, 1 / 60);
     const bounce = p.events.find(e => e.type === 'bounce' || e.type === 'wall' || e.type === 'roof');
     const land = bounce ? Math.hypot(bounce.x - bx, bounce.z - bz) : 99;
-    best = { vx: hx * s * cosE, vy: s * elev, vz: hz * s * cosE };
+    best = { vx: hx * s * cosE, vy: s * elev, vz: hz * s * cosE, wx: w.wx, wz: w.wz };
     if (land < d) lo = s; else hi = s;
   }
   return best;
@@ -71,7 +75,7 @@ export function solveLob(bx, by, bz, tx, tz, elev = 0.55) {
 // Aim a strike so its predicted path crosses the goal line at (goalX, ty, tz).
 // Works for direct shots, bank shots (pass the mirror angle as `angle0`) and
 // curled shots (spin wy) — the solver corrects angle and lift against the real sim.
-export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null, iters = 5 } = {}) {
+export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null, iters = 5, bs = 0 } = {}) {
   let ang = angle0 ?? Math.atan2(tz - ball.z, goalX - ball.x);
   // Flight-time guess. A bank's path is as long as the line to the mirror image,
   // and the second leg runs at ~0.7× after the cage restitution.
@@ -87,7 +91,8 @@ export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null,
   let vy = clamp((ty - ball.y + 0.5 * BALL.gravity * tGuess * tGuess) / tGuess, -2, 12);
   let prevAng = null, prevErr = null, cross = null;
   for (let i = 0; i < iters; i++) {
-    const b = ballAt(ball.x, ball.y, ball.z, Math.cos(ang) * speed, vy, Math.sin(ang) * speed, 0, wy, 0);
+    const w = backspin(Math.cos(ang), Math.sin(ang), bs);
+    const b = ballAt(ball.x, ball.y, ball.z, Math.cos(ang) * speed, vy, Math.sin(ang) * speed, w.wx, wy, w.wz);
     const p = predictPath(b, 3, 1 / 60);
     // Measure just in front of the end fence: a ball aimed wide rebounds off it
     // before ever reaching the goal line, but it still crosses this plane.
@@ -108,7 +113,8 @@ export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null,
     else next = ang + (errZ > 0 ? -0.004 : 0.004);
     prevAng = ang; prevErr = errZ; ang = next;
   }
-  return { vx: Math.cos(ang) * speed, vy, vz: Math.sin(ang) * speed, wy, cross, angle: ang };
+  const w = backspin(Math.cos(ang), Math.sin(ang), bs);
+  return { vx: Math.cos(ang) * speed, vy, vz: Math.sin(ang) * speed, wx: w.wx, wy, wz: w.wz, cross, angle: ang };
 }
 
 // Bank geometry off a side wall. With normal restitution e and tangential
