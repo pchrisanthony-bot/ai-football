@@ -1,0 +1,277 @@
+// Procedural textures (no downloaded art): everything is drawn to canvases.
+import * as THREE from 'three';
+import { COURT } from '../config.js';
+
+const cache = new Map();
+function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+function tex(c, { repeat = null, srgb = true, aniso = 8, mip = true } = {}) {
+  const t = new THREE.CanvasTexture(c);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = aniso;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
+  t.generateMipmaps = mip;
+  return t;
+}
+function once(key, fn) { if (!cache.has(key)) cache.set(key, fn()); return cache.get(key); }
+
+// Seeded noise for repeatable grain.
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+// ---------------------------------------------------------------- court
+// 64 px per metre over the court (32 × 18 m).
+export function courtTextures() {
+  return once('court', () => {
+    const PPM = 64, W = COURT.halfL * 2 * PPM, H = COURT.halfW * 2 * PPM;
+    const c = canvas(W, H), g = c.getContext('2d');
+    const r = rng(7);
+    // painted asphalt base
+    g.fillStyle = '#24262c'; g.fillRect(0, 0, W, H);
+    // aggregate grain
+    const img = g.getImageData(0, 0, W, H), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (r() - 0.5) * 22 + (r() < 0.02 ? (r() - 0.5) * 60 : 0);
+      d[i] += n; d[i + 1] += n; d[i + 2] += n * 1.05;
+    }
+    g.putImageData(img, 0, 0);
+    // scuffs & wear patches
+    for (let i = 0; i < 140; i++) {
+      g.fillStyle = `rgba(${r() < 0.7 ? '0,0,0' : '255,255,255'},${0.008 + r() * 0.018})`;
+      g.beginPath(); g.ellipse(r() * W, r() * H, 20 + r() * 160, 8 + r() * 60, r() * Math.PI, 0, Math.PI * 2); g.fill();
+    }
+    const X = x => (x + COURT.halfL) * PPM, Z = z => (z + COURT.halfW) * PPM;
+
+    // coloured zones: keeper areas + centre circle fill
+    const zone = (x0, sgn) => {
+      g.fillStyle = 'rgba(214, 48, 49, 0.55)';
+      g.beginPath(); g.arc(X(x0), Z(0), COURT.boxR * PPM, sgn > 0 ? -Math.PI / 2 : Math.PI / 2, sgn > 0 ? Math.PI / 2 : Math.PI * 1.5); g.fill();
+    };
+    zone(-COURT.halfL, 1); zone(COURT.halfL, -1);
+    g.fillStyle = 'rgba(255, 212, 0, 0.18)';
+    g.beginPath(); g.arc(X(0), Z(0), COURT.centreR * PPM, 0, Math.PI * 2); g.fill();
+
+    // lines
+    const line = (w, col = 'rgba(245,245,240,0.92)') => { g.strokeStyle = col; g.lineWidth = w * PPM; };
+    line(0.08);
+    g.strokeRect(X(-COURT.halfL) + 0.1 * PPM, Z(-COURT.halfW) + 0.1 * PPM, W - 0.2 * PPM, H - 0.2 * PPM);
+    g.beginPath(); g.moveTo(X(0), Z(-COURT.halfW)); g.lineTo(X(0), Z(COURT.halfW)); g.stroke();
+    g.beginPath(); g.arc(X(0), Z(0), COURT.centreR * PPM, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(X(-COURT.halfL), Z(0), COURT.boxR * PPM, -Math.PI / 2, Math.PI / 2); g.stroke();
+    g.beginPath(); g.arc(X(COURT.halfL), Z(0), COURT.boxR * PPM, Math.PI / 2, Math.PI * 1.5); g.stroke();
+    g.fillStyle = 'rgba(245,245,240,0.92)';
+    for (const x of [0, -COURT.halfL + 6, COURT.halfL - 6, -COURT.halfL + 10, COURT.halfL - 10]) { g.beginPath(); g.arc(X(x), Z(0), 0.12 * PPM, 0, Math.PI * 2); g.fill(); }
+    // yellow accent inner border
+    line(0.05, 'rgba(255,212,0,0.75)');
+    g.strokeRect(X(-COURT.halfL) + 0.35 * PPM, Z(-COURT.halfW) + 0.35 * PPM, W - 0.7 * PPM, H - 0.7 * PPM);
+
+    // centre logo
+    g.save();
+    g.translate(X(0), Z(0));
+    g.font = `900 ${0.9 * PPM}px "Arial Black", Impact, sans-serif`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = 'rgba(255,212,0,0.55)';
+    g.fillText('STREETCAGE', 0, 0);
+    g.restore();
+
+    // faded floor tag
+    g.save();
+    g.translate(X(-8), Z(5.5)); g.rotate(-0.15);
+    g.font = `italic 900 ${1.6 * PPM}px Impact, sans-serif`;
+    g.fillStyle = 'rgba(0,200,255,0.07)'; g.fillText('ROOF KINGS', 0, 0);
+    g.restore();
+
+    const map = tex(c, { aniso: 16 });
+    // roughness: lines smoother, asphalt rough
+    const rc = canvas(512, 288), rg = rc.getContext('2d');
+    rg.fillStyle = '#d8d8d8'; rg.fillRect(0, 0, 512, 288);
+    const rimg = rg.getImageData(0, 0, 512, 288);
+    for (let i = 0; i < rimg.data.length; i += 4) { const n = r() * 40; rimg.data[i] -= n; rimg.data[i + 1] -= n; rimg.data[i + 2] -= n; }
+    rg.putImageData(rimg, 0, 0);
+    const roughness = tex(rc, { srgb: false });
+    return { map, roughness };
+  });
+}
+
+// ---------------------------------------------------------------- chain-link fence
+export function chainLink() {
+  return once('chain', () => {
+    const S = 128, c = canvas(S, S), g = c.getContext('2d');
+    g.clearRect(0, 0, S, S);
+    g.strokeStyle = '#ffffff'; g.lineWidth = 7; g.lineCap = 'round';
+    // one diamond cell: two crossing diagonals tile into chain link
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(S, S); g.stroke();
+    g.beginPath(); g.moveTo(S, 0); g.lineTo(0, S); g.stroke();
+    g.beginPath(); g.moveTo(-S / 2, S / 2); g.lineTo(S / 2, S * 1.5); g.stroke();
+    const t = tex(c, { srgb: false, aniso: 16 });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+export function netTexture() {
+  return once('net', () => {
+    const S = 64, c = canvas(S, S), g = c.getContext('2d');
+    g.strokeStyle = '#ffffff'; g.lineWidth = 3;
+    g.strokeRect(0, 0, S, S);
+    const t = tex(c, { srgb: false, aniso: 8 });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+// ---------------------------------------------------------------- graffiti kickboards
+const PALETTE = ['#FFD400', '#FF3B6B', '#00D1FF', '#39FF88', '#B84DFF', '#FF8A00', '#FFFFFF'];
+const WORDS = ['STREETCAGE', 'PANNA', 'ROOF KINGS', '5 A SIDE', 'NO RULES', 'SKILLZ', 'CAGE BALL', 'NIGHT LEAGUE', 'NUTMEG', 'KEEP IT LIT'];
+export function graffitiBoard(seed, lengthM) {
+  return once(`graf${seed}_${lengthM}`, () => {
+    const PPM = 96, W = Math.round(lengthM * PPM), H = PPM;
+    const c = canvas(Math.min(W, 4096), H), g = c.getContext('2d');
+    const sx = c.width / W;
+    g.scale(sx, 1);
+    const r = rng(seed * 97 + 13);
+    // base paint
+    g.fillStyle = '#16161c'; g.fillRect(0, 0, W, H);
+    // panels
+    let x = 0;
+    while (x < W) {
+      const w = PPM * (1.5 + r() * 3);
+      const col = PALETTE[Math.floor(r() * PALETTE.length)];
+      const style = r();
+      g.save();
+      g.beginPath(); g.rect(x, 0, w, H); g.clip();
+      if (style < 0.3) {
+        // sponsor-style panel
+        g.fillStyle = col; g.globalAlpha = 0.9; g.fillRect(x + 4, 6, w - 8, H - 12);
+        g.globalAlpha = 1; g.fillStyle = '#111';
+        g.font = `900 ${H * 0.42}px "Arial Black", Impact, sans-serif`;
+        g.textBaseline = 'middle'; g.textAlign = 'center';
+        g.fillText(WORDS[Math.floor(r() * WORDS.length)], x + w / 2, H / 2, w - 20);
+      } else {
+        // spray tag: blobs + outlined text
+        for (let i = 0; i < 6; i++) {
+          g.fillStyle = PALETTE[Math.floor(r() * PALETTE.length)];
+          g.globalAlpha = 0.25 + r() * 0.4;
+          g.beginPath(); g.ellipse(x + r() * w, r() * H, 20 + r() * 60, 10 + r() * 30, r() * 3, 0, Math.PI * 2); g.fill();
+        }
+        g.globalAlpha = 1;
+        g.font = `italic 900 ${H * (0.45 + r() * 0.2)}px Impact, "Arial Black", sans-serif`;
+        g.textBaseline = 'middle'; g.textAlign = 'center';
+        const word = WORDS[Math.floor(r() * WORDS.length)];
+        g.lineWidth = 8; g.strokeStyle = '#0a0a0a'; g.strokeText(word, x + w / 2, H / 2 + 4, w - 10);
+        g.fillStyle = col; g.fillText(word, x + w / 2, H / 2, w - 10);
+        g.lineWidth = 2; g.strokeStyle = '#fff'; g.globalAlpha = 0.6; g.strokeText(word, x + w / 2, H / 2, w - 10);
+      }
+      g.restore();
+      x += w;
+    }
+    // grime at the bottom
+    const grd = g.createLinearGradient(0, H * 0.6, 0, H);
+    grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(1, 'rgba(0,0,0,0.55)');
+    g.fillStyle = grd; g.fillRect(0, 0, W, H);
+    // top trim
+    g.fillStyle = '#FFD400'; g.fillRect(0, 0, W, 5);
+    return tex(c, { aniso: 8 });
+  });
+}
+
+// ---------------------------------------------------------------- city windows
+export function windowTexture(seed) {
+  return once(`win${seed}`, () => {
+    const c = canvas(256, 512), g = c.getContext('2d');
+    const r = rng(seed * 31 + 5);
+    g.fillStyle = '#07080c'; g.fillRect(0, 0, 256, 512);
+    const cols = 8, rows = 24, cw = 256 / cols, rh = 512 / rows;
+    const warm = ['#ffd27a', '#ffe7b0', '#fff3d6', '#9fd4ff', '#ffc46b'];
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      if (r() < 0.38) {
+        g.fillStyle = warm[Math.floor(r() * warm.length)];
+        g.globalAlpha = 0.5 + r() * 0.5;
+        g.fillRect(x * cw + 5, y * rh + 5, cw - 10, rh - 9);
+      }
+    }
+    g.globalAlpha = 1;
+    const t = tex(c, { aniso: 4 });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+export function concreteTexture() {
+  return once('concrete', () => {
+    const S = 512, c = canvas(S, S), g = c.getContext('2d');
+    const r = rng(3);
+    g.fillStyle = '#34353a'; g.fillRect(0, 0, S, S);
+    const img = g.getImageData(0, 0, S, S);
+    for (let i = 0; i < img.data.length; i += 4) { const n = (r() - 0.5) * 26; img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n; }
+    g.putImageData(img, 0, 0);
+    g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 3;
+    for (let i = 0; i <= S; i += 128) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, S); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(S, i); g.stroke(); }
+    const t = tex(c, { aniso: 8 });
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  });
+}
+
+// ---------------------------------------------------------------- ball
+export function ballTexture() {
+  return once('ball', () => {
+    const W = 512, H = 256, c = canvas(W, H), g = c.getContext('2d');
+    g.fillStyle = '#f7f7f2'; g.fillRect(0, 0, W, H);
+    // bold street-ball panels (equirectangular-friendly swooshes)
+    const cols = ['#111111', '#FFD400', '#FF3B6B'];
+    for (let i = 0; i < 6; i++) {
+      g.fillStyle = cols[i % 3];
+      const cx = (i / 6) * W + 20, cy = i % 2 ? H * 0.32 : H * 0.68;
+      g.beginPath();
+      for (let k = 0; k < 5; k++) {
+        const a = (k / 5) * Math.PI * 2;
+        const px = cx + Math.cos(a) * 34, py = cy + Math.sin(a) * 30;
+        k ? g.lineTo(px, py) : g.moveTo(px, py);
+      }
+      g.closePath(); g.fill();
+    }
+    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 2;
+    for (let i = 0; i < 8; i++) { g.beginPath(); g.moveTo((i / 8) * W, 0); g.lineTo((i / 8) * W + 40, H); g.stroke(); }
+    return tex(c, { aniso: 8 });
+  });
+}
+
+// ---------------------------------------------------------------- shirt back number
+export function shirtTexture(kit, number, name) {
+  return once(`shirt_${kit.shirt}_${number}_${name}`, () => {
+    // 256×288 atlas: the shirt occupies the top 256 px; the bottom 32 px strip is
+    // plain white so every other body part (vertex-coloured) samples white.
+    const W = 256, H = 256, c = canvas(W, H + 32), g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, H, W, 32);
+    g.fillStyle = kit.shirt; g.fillRect(0, 0, W, H);
+    // Lathe UVs: u = 0 front centre, 0.25 left side, 0.5 back centre, 0.75 right side.
+    g.fillStyle = kit.trim;
+    g.fillRect(W * 0.25 - 7, 0, 14, H); g.fillRect(W * 0.75 - 7, 0, 14, H);
+    // collar band + hem
+    g.fillRect(0, H - 16, W, 16);
+    g.globalAlpha = 0.35; g.fillRect(0, 0, W, 8); g.globalAlpha = 1;
+    const bx = W * 0.5;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    // (canvas y is flipped vs the lathe's v: v = 0 at the waist → bottom of the canvas)
+    // v = height / 0.5 m: waist at the bottom of the canvas, collar at the top.
+    g.font = `900 ${H * 0.3}px "Arial Black", Impact, sans-serif`;
+    g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.35)'; g.strokeText(String(number), bx, H * 0.47);
+    g.fillStyle = kit.trim; g.fillText(String(number), bx, H * 0.47);
+    g.font = `800 ${H * 0.07}px Arial, sans-serif`;
+    g.fillText(name.toUpperCase(), bx, H * 0.27);
+    // front: small chest number just off-centre
+    g.font = `900 ${H * 0.11}px "Arial Black", Impact, sans-serif`;
+    g.fillText(String(number), W * 0.93, H * 0.36);
+    return tex(c, { aniso: 4 });
+  });
+}
+
+// Soft radial glow (for lamp flares, blob shadows, light pools).
+export function radialTexture(inner = 'rgba(255,255,255,1)', outer = 'rgba(255,255,255,0)', size = 128) {
+  return once(`rad${inner}${outer}${size}`, () => {
+    const c = canvas(size, size), g = c.getContext('2d');
+    const grd = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grd.addColorStop(0, inner); grd.addColorStop(1, outer);
+    g.fillStyle = grd; g.fillRect(0, 0, size, size);
+    return tex(c, { aniso: 1 });
+  });
+}

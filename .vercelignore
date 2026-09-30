@@ -1,0 +1,9 @@
+# Only the app source is needed; Vercel installs and builds it.
+node_modules
+dist
+reference
+legacy
+tests
+.claude
+.env*.local
+PLAN.md

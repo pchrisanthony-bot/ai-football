@@ -1,0 +1,986 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STREETCAGE</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0B0B0F; overflow: hidden; }
+  #game { width: 100%; height: 100%; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<script>
+'use strict';
+
+// =====================================================================
+// TUNING — everything worth nudging live lives here
+// =====================================================================
+let AI_DIFFICULTY = 0.6;            // 0..1 — scales reaction delay + chase/defend speed only ( [ / ] keys )
+
+const W = 1200, H = 760;
+const PITCH = { L: 70, R: 1130, T: 86, B: 736 };
+const PW = PITCH.R - PITCH.L, PH = PITCH.B - PITCH.T;
+const CX = (PITCH.L + PITCH.R) / 2, CY = (PITCH.T + PITCH.B) / 2;
+const GOAL_HALF = 78, GOAL_DEPTH = 40, WALL_T = 40;
+const MATCH_SECONDS = 90;
+
+const PR = 14, BR = 9;                               // player / ball radius (px)
+const JOG = 160, SPRINT = 240, ACCEL = 900, DECEL = 1400;
+const DRIBBLE_MULT = 0.92;                           // carrying the ball is slightly slower
+
+const BALL = {
+  RESTITUTION: 0.70,      // mesh — research-validated value (e > 0.85 = unrealistic)
+  NET_RESTITUTION: 0.15,  // back of the net swallows the ball
+  FRICTION_ROLL: 0.985,   // per 60Hz frame while rolling
+  FRICTION_SKID: 0.990,   // per 60Hz frame while a struck ball is still skidding (fast)
+  SKID_SPEED: 320,        // above this the ball is "skidding" rather than rolling
+  SHOT_MAX: 900,
+  PASS_MIN: 240, PASS_MAX: 380,
+};
+const CHARGE_TIME = 0.8, TAP_TIME = 0.18;
+const AIM_RATE = Math.PI * 0.75;      // rad/s the aim sweeps while charging (~135°/s — fine enough to line up a bank)
+const CHARGE_MOVE_CAP = 55;           // you plant your feet while charging
+const CONTROL_SPEED = 400;            // loose ball slower than this (relative) = trapped, else deflects
+const GK_CATCH_SPEED = 440;
+const STEAL_RATE = 3.0;               // AI tackle success per second of contact, × difficulty
+const AI_TICK = 0.2;                  // FSM transitions evaluated every 0.2s
+const GK_RUSH_RANGE = 170;
+
+const HOME = 0, AWAY = 1;
+const TEAMS = [
+  { name: 'HOME', color: 0x0077FF, dir: 1 },   // defends left, attacks right
+  { name: 'AWAY', color: 0xFF4B4B, dir: -1 },
+];
+const ACCENT = 0xFFD400;
+// Formation slots in team-relative coords: u = 0 own goal → 1 opp goal, v = 0 top → 1 bottom
+const SLOTS = [
+  { u: 0.035, v: 0.50, gk: true },
+  { u: 0.22, v: 0.30 }, { u: 0.22, v: 0.70 },
+  { u: 0.50, v: 0.33 }, { u: 0.50, v: 0.67 },
+];
+
+// Cage geometry (ball collision). Axis-aligned boxes; circle-vs-AABB gives true normals at post corners.
+const WALLS = [];
+(function buildWalls() {
+  const e = BALL.RESTITUTION, n = BALL.NET_RESTITUTION;
+  const xl = PITCH.L - GOAL_DEPTH - WALL_T, xr = PITCH.R + GOAL_DEPTH + WALL_T;
+  WALLS.push({ x0: xl, x1: xr, y0: PITCH.T - WALL_T, y1: PITCH.T, e, kind: 'mesh' });            // top
+  WALLS.push({ x0: xl, x1: xr, y0: PITCH.B, y1: PITCH.B + WALL_T, e, kind: 'mesh' });            // bottom
+  WALLS.push({ x0: xl, x1: PITCH.L, y0: PITCH.T - WALL_T, y1: CY - GOAL_HALF, e, kind: 'mesh' }); // left, above goal
+  WALLS.push({ x0: xl, x1: PITCH.L, y0: CY + GOAL_HALF, y1: PITCH.B + WALL_T, e, kind: 'mesh' }); // left, below goal
+  WALLS.push({ x0: xl, x1: PITCH.L - GOAL_DEPTH, y0: CY - GOAL_HALF, y1: CY + GOAL_HALF, e: n, kind: 'net' });
+  WALLS.push({ x0: PITCH.R, x1: xr, y0: PITCH.T - WALL_T, y1: CY - GOAL_HALF, e, kind: 'mesh' });
+  WALLS.push({ x0: PITCH.R, x1: xr, y0: CY + GOAL_HALF, y1: PITCH.B + WALL_T, e, kind: 'mesh' });
+  WALLS.push({ x0: PITCH.R + GOAL_DEPTH, x1: xr, y0: CY - GOAL_HALF, y1: CY + GOAL_HALF, e: n, kind: 'net' });
+})();
+
+// =====================================================================
+// Math helpers
+// =====================================================================
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
+function rotateTowards(cur, target, maxStep) {
+  const d = wrapAngle(target - cur);
+  return Math.abs(d) <= maxStep ? target : cur + Math.sign(d) * maxStep;
+}
+function distToSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 ? clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+const ownGoalX = team => team === HOME ? PITCH.L : PITCH.R;
+const oppGoalX = team => team === HOME ? PITCH.R : PITCH.L;
+const uvToXY = (team, u, v) => ({ x: team === HOME ? PITCH.L + u * PW : PITCH.R - u * PW, y: PITCH.T + v * PH });
+
+// =====================================================================
+// 🔒 BALL PHYSICS — the protected feature lives here
+// =====================================================================
+// Reflection: v' = e · (v − 2(v·n)n). Scaling the whole reflected vector keeps the
+// rebound angle equal to the incidence angle, so a bank shot is predictable.
+function collideWalls(b, onHit, reflect) {
+  for (const w of WALLS) {
+    const cx = clamp(b.x, w.x0, w.x1), cy = clamp(b.y, w.y0, w.y1);
+    let dx = b.x - cx, dy = b.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= BR * BR) continue;
+    let nx, ny, pen;
+    if (d2 < 1e-9) {           // centre inside the box: push out along the shallowest axis
+      const l = b.x - w.x0, r = w.x1 - b.x, t = b.y - w.y0, bo = w.y1 - b.y;
+      const m = Math.min(l, r, t, bo);
+      if (m === l) { nx = -1; ny = 0; } else if (m === r) { nx = 1; ny = 0; }
+      else if (m === t) { nx = 0; ny = -1; } else { nx = 0; ny = 1; }
+      pen = BR + m;
+    } else {
+      const d = Math.sqrt(d2);
+      nx = dx / d; ny = dy / d; pen = BR - d;
+    }
+    b.x += nx * pen; b.y += ny * pen;
+    if (!reflect) continue;
+    const vn = b.vx * nx + b.vy * ny;
+    if (vn < 0) {
+      b.vx = (b.vx - 2 * vn * nx) * w.e;
+      b.vy = (b.vy - 2 * vn * ny) * w.e;
+      if (onHit) onHit(-vn, b.x - nx * BR, b.y - ny * BR, nx, ny, w);
+    }
+  }
+}
+
+// Substepped so a 900px/s shot never tunnels (max 3px per substep).
+function stepBallPhysics(b, dt, onHit) {
+  const sp = Math.hypot(b.vx, b.vy);
+  const n = Math.max(1, Math.ceil(sp * dt / 3));
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    b.x += b.vx * h; b.y += b.vy * h;
+    collideWalls(b, onHit, true);
+  }
+  const f = Math.pow(sp > BALL.SKID_SPEED ? BALL.FRICTION_SKID : BALL.FRICTION_ROLL, dt * 60);
+  b.vx *= f; b.vy *= f;
+  if (Math.hypot(b.vx, b.vy) < 5) { b.vx = 0; b.vy = 0; }
+}
+
+// Same integrator, run ahead of time — drives the aim preview.
+function predictPath(x, y, ang, speed, seconds) {
+  const b = { x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed };
+  const pts = [{ x, y }], bounces = [];
+  let goal = false;
+  for (let i = 0; i < seconds * 60; i++) {
+    stepBallPhysics(b, 1 / 60, (imp, px, py, nx, ny, w) => { if (w.kind === 'mesh') bounces.push({ x: px, y: py }); });
+    pts.push({ x: b.x, y: b.y });
+    if (Math.abs(b.y - CY) < GOAL_HALF && (b.x < PITCH.L - BR || b.x > PITCH.R + BR)) { goal = true; break; }
+    if (b.vx === 0 && b.vy === 0) break;
+  }
+  return { pts, bounces, goal };
+}
+
+// =====================================================================
+// SCENE
+// =====================================================================
+class Match extends Phaser.Scene {
+  constructor() { super('match'); }
+
+  create() {
+    this.buildCourt();
+    this.fxG = this.add.graphics().setDepth(5);
+    this.dynG = this.add.graphics().setDepth(10);
+    this.flashRect = this.add.rectangle(W / 2, H / 2, W, H, 0xffffff, 1).setAlpha(0).setDepth(50);
+    this.sparks = [];
+    this.createHUD();
+
+    this.physics.world.setBounds(PITCH.L, PITCH.T, PW, PH);
+    this.group = this.physics.add.group({ collideWorldBounds: true });
+    this.agents = [];
+    this.teams = [[], []];
+    for (let t = 0; t < 2; t++) {
+      SLOTS.forEach((s, i) => {
+        const p = uvToXY(t, s.u, s.v);
+        const arc = this.add.circle(p.x, p.y, PR, TEAMS[t].color).setDepth(8);
+        arc.setStrokeStyle(2, 0x000000, 0.45);
+        this.group.add(arc);
+        arc.body.setCircle(PR);
+        const label = this.add.text(p.x, p.y, '', {
+          fontFamily: 'Arial, sans-serif', fontSize: '10px', fontStyle: 'bold', color: '#FFD400',
+          stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5, 1).setDepth(20);
+        const a = {
+          team: t, idx: i, gk: !!s.gk, slotU: s.u, slotV: s.v, arc, body: arc.body, label,
+          facing: t === HOME ? 0 : Math.PI, dirX: 0, dirY: 0, speed: 0,
+          state: 'IDLE', pending: null, pendingT: 0, isHuman: false,
+          kickCD: 0, stealCD: 0, possessT: 0, ballAng: 0, popText: '', popT: 0, gkY: CY,
+          x() { return this.arc.x; }, y() { return this.arc.y; },
+        };
+        this.agents.push(a); this.teams[t].push(a);
+      });
+    }
+    this.physics.add.collider(this.group, this.group);
+
+    this.ball = { x: CX, y: CY, vx: 0, vy: 0, owner: null, passTarget: null, passT: 0, wallHits: 0, lastTouchTeam: null };
+    this.human = this.teams[HOME][3];
+    this.human.isHuman = true;
+    this.charging = false; this.chargeT = 0;
+    this.drill = false;
+    this.score = [0, 0];
+    this.clock = MATCH_SECONDS;
+    this.aiTickT = 0;
+
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,R,T,ENTER,OPEN_BRACKET,CLOSED_BRACKET');
+    this.input.keyboard.on('keydown', () => { const c = this.sound.context; if (c && c.state === 'suspended') c.resume(); });
+
+    this.setupKickoff(HOME);
+    this.setPhase('countdown', 3);
+    window.__sc = this; // console/test hook
+  }
+
+  // -------------------------------------------------------------------
+  // Court (drawn once to a canvas texture: floodlight vignette needs a radial gradient)
+  // -------------------------------------------------------------------
+  buildCourt() {
+    if (!this.textures.exists('court')) {
+      const tex = this.textures.createCanvas('court', W, H);
+      const c = tex.getContext();
+      const { L, R, T, B } = PITCH;
+      c.fillStyle = '#0B0B0F'; c.fillRect(0, 0, W, H);
+
+      // rooftop skyline silhouettes peeking behind the cage
+      c.fillStyle = '#121218';
+      [[0, 30, 70, 30], [W - 70, 20, 70, 40]].forEach(r => c.fillRect(...r));
+
+      // floor
+      c.fillStyle = '#1A1A1F'; c.fillRect(L, T, PW, PH);
+      c.fillStyle = '#121216';
+      c.fillRect(L - GOAL_DEPTH, CY - GOAL_HALF, GOAL_DEPTH, GOAL_HALF * 2);
+      c.fillRect(R, CY - GOAL_HALF, GOAL_DEPTH, GOAL_HALF * 2);
+
+      // nets
+      c.save();
+      c.strokeStyle = 'rgba(200,200,210,0.22)'; c.lineWidth = 1;
+      for (const gx of [L - GOAL_DEPTH, R]) {
+        for (let x = gx; x <= gx + GOAL_DEPTH; x += 8) { c.beginPath(); c.moveTo(x, CY - GOAL_HALF); c.lineTo(x, CY + GOAL_HALF); c.stroke(); }
+        for (let y = CY - GOAL_HALF; y <= CY + GOAL_HALF; y += 8) { c.beginPath(); c.moveTo(gx, y); c.lineTo(gx + GOAL_DEPTH, y); c.stroke(); }
+      }
+      c.restore();
+
+      // floodlight vignette — bright pool in the middle, dark toward the mesh
+      const grd = c.createRadialGradient(CX, CY, 10, CX, CY, Math.hypot(PW, PH) / 2);
+      grd.addColorStop(0, 'rgba(255,255,255,0.17)');
+      grd.addColorStop(0.35, 'rgba(255,255,255,0.06)');
+      grd.addColorStop(0.7, 'rgba(0,0,0,0.12)');
+      grd.addColorStop(1, 'rgba(0,0,0,0.55)');
+      c.fillStyle = grd; c.fillRect(L - GOAL_DEPTH, T, PW + GOAL_DEPTH * 2, PH);
+
+      // chalk
+      c.strokeStyle = 'rgba(236,232,220,0.55)'; c.lineWidth = 3;
+      c.strokeRect(L + 3, T + 3, PW - 6, PH - 6);
+      c.beginPath(); c.moveTo(CX, T + 3); c.lineTo(CX, B - 3); c.stroke();
+      c.beginPath(); c.arc(CX, CY, 80, 0, Math.PI * 2); c.stroke();
+      c.beginPath(); c.arc(L + 3, CY, 150, -Math.PI / 2, Math.PI / 2); c.stroke();
+      c.beginPath(); c.arc(R - 3, CY, 150, Math.PI / 2, Math.PI * 1.5); c.stroke();
+      c.fillStyle = 'rgba(236,232,220,0.7)';
+      c.beginPath(); c.arc(CX, CY, 5, 0, Math.PI * 2); c.fill();
+
+      // wire mesh band (chain-link diamond hatch)
+      const band = 22;
+      c.save();
+      c.beginPath();
+      c.rect(L - band - GOAL_DEPTH, T - band, PW + 2 * (band + GOAL_DEPTH), band);
+      c.rect(L - band - GOAL_DEPTH, B, PW + 2 * (band + GOAL_DEPTH), band);
+      c.rect(L - band, T, band, CY - GOAL_HALF - T);
+      c.rect(L - band, CY + GOAL_HALF, band, B - CY - GOAL_HALF);
+      c.rect(R, T, band, CY - GOAL_HALF - T);
+      c.rect(R, CY + GOAL_HALF, band, B - CY - GOAL_HALF);
+      c.clip();
+      c.fillStyle = 'rgba(40,40,48,0.7)'; c.fillRect(0, 0, W, H);
+      c.strokeStyle = 'rgba(85,85,85,0.4)'; c.lineWidth = 1.3;
+      for (let k = -H; k < W + H; k += 9) {
+        c.beginPath(); c.moveTo(k, 0); c.lineTo(k + H, H); c.stroke();
+        c.beginPath(); c.moveTo(k, H); c.lineTo(k + H, 0); c.stroke();
+      }
+      c.restore();
+      // mesh inner edge + fence posts
+      c.strokeStyle = 'rgba(140,140,150,0.55)'; c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(L, CY - GOAL_HALF); c.lineTo(L, T); c.lineTo(R, T); c.lineTo(R, CY - GOAL_HALF);
+      c.moveTo(L, CY + GOAL_HALF); c.lineTo(L, B); c.lineTo(R, B); c.lineTo(R, CY + GOAL_HALF);
+      c.stroke();
+      c.fillStyle = '#3A3A44';
+      for (let x = L; x <= R + 1; x += PW / 10) { c.fillRect(x - 3, T - band, 6, band); c.fillRect(x - 3, B, 6, band); }
+
+      // goal frames + posts
+      c.strokeStyle = '#F2F2F2'; c.lineWidth = 3;
+      c.strokeRect(L - GOAL_DEPTH, CY - GOAL_HALF, GOAL_DEPTH, GOAL_HALF * 2);
+      c.strokeRect(R, CY - GOAL_HALF, GOAL_DEPTH, GOAL_HALF * 2);
+      c.fillStyle = '#FFFFFF';
+      for (const px of [L, R]) for (const py of [CY - GOAL_HALF, CY + GOAL_HALF]) { c.beginPath(); c.arc(px, py, 4, 0, Math.PI * 2); c.fill(); }
+
+      // HUD bar
+      c.fillStyle = '#07070A'; c.fillRect(0, 0, W, 56);
+      c.fillStyle = 'rgba(255,212,0,0.5)'; c.fillRect(0, 56, W, 1);
+      tex.refresh();
+    }
+    this.add.image(0, 0, 'court').setOrigin(0).setDepth(0);
+  }
+
+  createHUD() {
+    const big = { fontFamily: '"Arial Black", Impact, sans-serif', fontSize: '26px', color: '#FFFFFF' };
+    this.add.text(24, 9, 'STREETCAGE', { ...big, fontSize: '22px', color: '#FFD400' }).setDepth(30);
+    this.add.text(24, 36, 'WASD move · SHIFT sprint · SPACE tap = pass, hold = shoot · T trick-shot drill · R restart',
+      { fontFamily: 'Arial, sans-serif', fontSize: '11px', color: '#8E8E9A' }).setDepth(30);
+    this.homeTxt = this.add.text(W / 2 - 58, 28, 'HOME', { ...big, color: '#3B97FF' }).setOrigin(1, 0.5).setDepth(30);
+    this.scoreTxt = this.add.text(W / 2, 28, '0 — 0', big).setOrigin(0.5).setDepth(30);
+    this.awayTxt = this.add.text(W / 2 + 58, 28, 'AWAY', { ...big, color: '#FF6B6B' }).setOrigin(0, 0.5).setDepth(30);
+    this.timerTxt = this.add.text(W - 24, 8, '1:30', big).setOrigin(1, 0).setDepth(30);
+    this.diffTxt = this.add.text(W - 24, 40, '', { fontFamily: 'Arial, sans-serif', fontSize: '11px', color: '#8E8E9A' }).setOrigin(1, 0).setDepth(30);
+    this.banner = this.add.text(W / 2, CY - 20, '', {
+      fontFamily: '"Arial Black", Impact, sans-serif', fontSize: '72px', color: '#FFFFFF', stroke: '#000000', strokeThickness: 8,
+    }).setOrigin(0.5).setDepth(60);
+    this.subBanner = this.add.text(W / 2, CY + 40, '', {
+      fontFamily: '"Arial Black", Impact, sans-serif', fontSize: '22px', color: '#FFD400', stroke: '#000000', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(60);
+  }
+
+  showBanner(text, sub = '', color = '#FFFFFF', fadeAfter = 0) {
+    this.tweens.killTweensOf([this.banner, this.subBanner]);
+    this.banner.setText(text).setColor(color).setAlpha(1).setScale(1);
+    this.subBanner.setText(sub).setAlpha(1);
+    if (fadeAfter) this.tweens.add({ targets: [this.banner, this.subBanner], alpha: 0, delay: fadeAfter, duration: 350 });
+  }
+
+  // -------------------------------------------------------------------
+  // SFX — synthesized via Phaser's WebAudio context (no asset files)
+  // -------------------------------------------------------------------
+  tone(freq, dur, vol, type = 'square', slideTo = null, delay = 0) {
+    const ctx = this.sound.context;
+    if (!ctx || ctx.state !== 'running') return;
+    const t0 = ctx.currentTime + delay;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(ctx.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  sfxKick(power) { this.tone(140 + power * 60, 0.09, 0.25 + power * 0.2, 'sine', 60); }
+  sfxWall(k) { this.tone(260 + k * 500, 0.14, 0.05 + k * 0.12, 'square', 120); this.tone(900 + k * 900, 0.06, 0.03 + k * 0.05, 'triangle'); }
+  sfxWhistle() { this.tone(1850, 0.18, 0.12, 'sine'); this.tone(1850, 0.3, 0.12, 'sine', null, 0.24); }
+  sfxGoal() { [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.22, 0.14, 'square', null, i * 0.09)); }
+
+  // -------------------------------------------------------------------
+  // Match flow
+  // -------------------------------------------------------------------
+  setPhase(p, t = 0) {
+    this.phase = p; this.phaseT = t;
+    if (p === 'play') { this.showBanner('GO!', '', '#FFD400', 350); this.sfxWhistle(); }
+  }
+
+  setupKickoff(kickTeam) {
+    const b = this.ball;
+    for (const a of this.agents) {
+      const dir = TEAMS[a.team].dir;
+      let p = uvToXY(a.team, Math.min(a.slotU, 0.42), a.slotV);
+      if (a.team === kickTeam && a.idx === 3) p = { x: CX - dir * (PR + BR + 2), y: CY };
+      a.body.reset(p.x, p.y);
+      a.speed = 0; a.facing = dir > 0 ? 0 : Math.PI;
+      a.state = 'IDLE'; a.pending = null; a.kickCD = a.stealCD = a.possessT = 0; a.popT = 0;
+    }
+    this.switchTo(this.teams[HOME][3]);
+    b.vx = b.vy = 0; b.passTarget = null; b.wallHits = 0;
+    this.possess(this.teams[kickTeam][3]);
+    this.charging = false; this.drill = false;
+  }
+
+  goalScored(team) {
+    const b = this.ball;
+    this.score[team]++;
+    this.scoreTxt.setText(`${this.score[HOME]} — ${this.score[AWAY]}`);
+    this.tweens.add({ targets: this.scoreTxt, scale: { from: 1.5, to: 1 }, duration: 400, ease: 'Back.Out' });
+    const own = b.lastTouchTeam !== null && b.lastTouchTeam !== team;
+    const cage = b.wallHits > 0 && !own;
+    const color = team === HOME ? '#3B97FF' : '#FF6B6B';
+    if (cage) this.showBanner('CAGE GOAL!', `off the mesh${b.wallHits > 1 ? ' ×' + b.wallHits : ''} — ${TEAMS[team].name}`, '#FFD400');
+    else this.showBanner(own ? 'OWN GOAL!' : 'GOAL!', TEAMS[team].name, color);
+    this.cameras.main.shake(300, 0.008);
+    this.flash(0.35);
+    this.sfxGoal();
+    b.owner = null; b.passTarget = null;
+    this.charging = false; this.drill = false;
+    this.nextKick = 1 - team;
+    this.setPhase('goal', 2.2);
+  }
+
+  fullTime() {
+    this.setPhase('fulltime');
+    const [h, a] = this.score;
+    const res = h > a ? 'HOME WINS' : a > h ? 'AWAY WINS' : 'DRAW';
+    this.showBanner('FULL TIME', `${res}  ${h} — ${a}   ·   press R to play again`, '#FFFFFF');
+    this.sfxWhistle();
+    this.ball.owner = null; this.charging = false;
+  }
+
+  // Trick-shot drill: puts you on the ball with a defender parked in the direct lane.
+  // Everyone else freezes until you strike it — the wall-rebound on command.
+  setupDrill() {
+    this.setupKickoff(HOME);
+    const place = (a, x, y) => { a.body.reset(x, y); a.speed = 0; };
+    const [hg, h1, h2, h3, h4] = this.teams[HOME];
+    const [ag, a1, a2, a3, a4] = this.teams[AWAY];
+    place(h3, 770, 531); place(h4, 620, 250); place(h1, 380, 330); place(h2, 380, 520); place(hg, PITCH.L + 30, CY);
+    // keeper cheats to the near (bottom) post — the direct lane is shut, the bank to the top corner is on
+    place(a1, 950, 478); place(a2, 1010, 300); place(a3, 700, 300); place(a4, 600, 460); place(ag, PITCH.R - 26, CY + 52);
+    ag.gkY = CY + 52;
+    for (const a of this.agents) { a.facing = Math.atan2(CY - a.y(), (a.team === HOME ? PITCH.R : PITCH.L) - a.x()); a.state = 'IDLE'; }
+    this.switchTo(h3);
+    h3.facing = Math.atan2(CY - 531, PITCH.R - 770);
+    this.possess(h3);
+    this.drill = true;
+    this.setPhase('play');
+    this.showBanner('TRICK-SHOT DRILL', 'defender in the lane — hold SPACE, aim at the mesh, bank it in', '#FFD400', 1600);
+  }
+
+  // -------------------------------------------------------------------
+  // Main loop
+  // -------------------------------------------------------------------
+  update(time, delta) {
+    const dt = Math.min(delta / 1000, 1 / 30);
+    const K = Phaser.Input.Keyboard;
+    if (K.JustDown(this.keys.R)) { this.scene.restart(); return; }
+    if (this.phase === 'fulltime' && K.JustDown(this.keys.ENTER)) { this.scene.restart(); return; }
+    if (K.JustDown(this.keys.T) && this.phase !== 'fulltime') this.setupDrill();
+    if (K.JustDown(this.keys.OPEN_BRACKET)) AI_DIFFICULTY = Math.round(clamp(AI_DIFFICULTY - 0.1, 0, 1) * 10) / 10;
+    if (K.JustDown(this.keys.CLOSED_BRACKET)) AI_DIFFICULTY = Math.round(clamp(AI_DIFFICULTY + 0.1, 0, 1) * 10) / 10;
+
+    for (const a of this.agents) {
+      a.kickCD -= dt; a.stealCD -= dt; a.popT -= dt;
+      if (this.ball.owner === a) a.possessT += dt;
+    }
+
+    if (this.phase === 'play') {
+      this.clock -= dt;
+      if (this.clock <= 0) { this.clock = 0; this.fullTime(); }
+      else {
+        this.updateSwitch();
+        this.updateHuman(dt);
+        this.aiTickT -= dt;
+        if (this.aiTickT <= 0) {
+          this.aiTickT = AI_TICK;
+          for (const a of this.agents) if (!a.isHuman) this.think(a, false);
+        }
+        for (const a of this.agents) if (!a.isHuman) this.updateAgent(a, dt);
+        this.updateBall(dt);
+        this.checkGoal();
+      }
+    } else {
+      for (const a of this.agents) this.move(a, 0, 0, 0, dt, false);
+      if (this.phase === 'goal') {
+        stepBallPhysics(this.ball, dt, null);
+        this.phaseT -= dt;
+        if (this.phaseT <= 0) {
+          this.showBanner('', '');
+          this.setupKickoff(this.nextKick);
+          this.setPhase('countdown', 1.5);
+        }
+      } else if (this.phase === 'countdown') {
+        this.phaseT -= dt;
+        this.showBanner(String(Math.ceil(this.phaseT)), '', '#FFFFFF');
+        if (this.phaseT <= 0) this.setPhase('play');
+      }
+      if (this.ball.owner) this.attachBall(this.ball.owner, dt);
+    }
+
+    this.updateFx(dt);
+    this.render();
+  }
+
+  // -------------------------------------------------------------------
+  // Movement — non-linear accel taper a = a_max·(1 − v/v_max), hard decel, instant turn
+  // -------------------------------------------------------------------
+  move(a, dx, dy, vmax, dt, setFacing = true) {
+    const len = Math.hypot(dx, dy);
+    if (len > 0.01 && vmax > 0) {
+      if (a.speed > vmax) a.speed = Math.max(vmax, a.speed - DECEL * dt);
+      else a.speed = Math.min(vmax, a.speed + ACCEL * Math.max(0.15, 1 - a.speed / vmax) * dt);
+      a.dirX = dx / len; a.dirY = dy / len;
+      if (setFacing) a.facing = Math.atan2(a.dirY, a.dirX);
+    } else {
+      a.speed = Math.max(0, a.speed - DECEL * dt);
+    }
+    a.body.setVelocity(a.dirX * a.speed, a.dirY * a.speed);
+  }
+
+  moveTo(a, tx, ty, vmax, dt) {
+    const dx = tx - a.x(), dy = ty - a.y(), d = Math.hypot(dx, dy);
+    if (d < 5) { this.move(a, 0, 0, 0, dt); this.faceBall(a); return; }
+    this.move(a, dx, dy, Math.min(vmax, 30 + d * 3.5), dt);
+  }
+
+  faceBall(a) { a.facing = Math.atan2(this.ball.y - a.y(), this.ball.x - a.x()); }
+
+  // -------------------------------------------------------------------
+  // Human control
+  // -------------------------------------------------------------------
+  readDir() {
+    const k = this.keys;
+    return {
+      x: (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0),
+      y: (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0),
+    };
+  }
+
+  updateHuman(dt) {
+    const h = this.human, b = this.ball, K = Phaser.Input.Keyboard;
+    const d = this.readDir();
+    const owns = b.owner === h;
+    if (this.charging && !owns) this.charging = false;
+
+    if (K.JustDown(this.keys.SPACE) && owns) { this.charging = true; this.chargeT = 0; }
+
+    if (this.charging) {
+      this.chargeT += dt;
+      if (d.x || d.y) h.facing = rotateTowards(h.facing, Math.atan2(d.y, d.x), AIM_RATE * dt);
+      this.move(h, d.x, d.y, CHARGE_MOVE_CAP, dt, false);
+    } else {
+      const vmax = (this.keys.SHIFT.isDown ? SPRINT : JOG) * (owns ? DRIBBLE_MULT : 1);
+      this.move(h, d.x, d.y, vmax, dt, true);
+    }
+
+    if (K.JustUp(this.keys.SPACE) && this.charging) {
+      this.charging = false;
+      if (this.chargeT < TAP_TIME) this.humanPass();
+      else {
+        const fill = Math.min(1, this.chargeT / CHARGE_TIME);
+        this.kick(h, this.shotAngle(h), BALL.SHOT_MAX * (0.3 + 0.7 * fill));
+      }
+    }
+  }
+
+  // Ball sits in front of the player; kick straight along the facing line from there.
+  shotAngle(a) { return a.facing; }
+
+  humanPass() {
+    const h = this.human;
+    let best = null, bestScore = Infinity;
+    for (const m of this.teams[HOME]) {
+      if (m === h) continue;
+      const dx = m.x() - h.x(), dy = m.y() - h.y(), d = Math.hypot(dx, dy);
+      const diff = Math.abs(wrapAngle(Math.atan2(dy, dx) - h.facing));
+      if (diff > Math.PI / 3 || d < 40) continue;
+      const score = d * (1 + diff * 2);
+      if (score < bestScore) { bestScore = score; best = m; }
+    }
+    if (best) this.passTo(h, best);
+    else this.kick(h, h.facing, BALL.PASS_MAX);
+  }
+
+  passTo(a, m) {
+    const b = this.ball;
+    const lx = m.x() + m.body.velocity.x * 0.3, ly = m.y() + m.body.velocity.y * 0.3;
+    const d = Math.hypot(lx - b.x, ly - b.y);
+    this.kick(a, Math.atan2(ly - b.y, lx - b.x), clamp(200 + d * 0.45, BALL.PASS_MIN, BALL.PASS_MAX));
+    b.passTarget = m; b.passT = 1.6;
+  }
+
+  // Control follows whoever on HOME is closest to the ball — never mid-charge.
+  updateSwitch() {
+    if (this.charging || this.drill) return;
+    const b = this.ball;
+    if (b.owner) { if (b.owner.team === HOME && b.owner !== this.human) this.switchTo(b.owner); return; }
+    if (b.passTarget && b.passTarget.team === HOME) { if (b.passTarget !== this.human) this.switchTo(b.passTarget); return; }
+    const px = b.x + b.vx * 0.15, py = b.y + b.vy * 0.15;
+    let best = null, bd = Infinity;
+    for (const m of this.teams[HOME]) {
+      const d = Math.hypot(m.x() - px, m.y() - py);
+      if (d < bd) { bd = d; best = m; }
+    }
+    const hd = Math.hypot(this.human.x() - px, this.human.y() - py);
+    if (best !== this.human && bd < hd - 30) this.switchTo(best);
+  }
+
+  switchTo(a) {
+    if (this.human === a) { a.isHuman = true; return; }
+    const old = this.human;
+    old.isHuman = false;
+    a.isHuman = true;
+    this.human = a;
+    this.think(old, true);
+  }
+
+  // -------------------------------------------------------------------
+  // Ball: possession, kicks, tackles, loose-ball physics
+  // -------------------------------------------------------------------
+  possess(a) {
+    const b = this.ball;
+    b.owner = a; b.passTarget = null; b.wallHits = 0; b.lastTouchTeam = a.team;
+    b.vx = b.vy = 0;
+    a.possessT = 0;
+    a.ballAng = Math.atan2(b.y - a.y(), b.x - a.x());
+    if (!a.isHuman) this.think(a, true);
+  }
+
+  kick(a, ang, speed) {
+    const b = this.ball;
+    if (b.owner !== a) return;
+    b.owner = null;
+    b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
+    b.wallHits = 0; b.lastTouchTeam = a.team; b.passTarget = null;
+    a.kickCD = 0.3;
+    this.drill = false;
+    this.sfxKick(speed / BALL.SHOT_MAX);
+  }
+
+  attachBall(o, dt) {
+    const b = this.ball;
+    o.ballAng = rotateTowards(o.ballAng, o.facing, 14 * dt);
+    const r = PR + BR + 1;
+    b.x = o.x() + Math.cos(o.ballAng) * r;
+    b.y = o.y() + Math.sin(o.ballAng) * r;
+    b.vx = o.body.velocity.x; b.vy = o.body.velocity.y;
+    collideWalls(b, null, false);
+  }
+
+  updateBall(dt) {
+    const b = this.ball;
+    if (b.passT > 0 && (b.passT -= dt) <= 0) b.passTarget = null;
+
+    if (b.owner) {
+      const o = b.owner;
+      this.attachBall(o, dt);
+      if (o.possessT < 0.35 || this.drill) return;
+      for (const opp of this.teams[1 - o.team]) {
+        if (opp.stealCD > 0) continue;
+        if (Math.hypot(opp.x() - b.x, opp.y() - b.y) > PR + BR + 3) continue;
+        const chance = opp.isHuman ? 1 : STEAL_RATE * AI_DIFFICULTY * dt;
+        if (Math.random() < chance) {
+          o.stealCD = 0.7; opp.stealCD = 0.3;
+          this.possess(opp);
+          this.tone(320, 0.07, 0.15, 'square', 180);
+          if (!o.isHuman) this.think(o, true);
+          break;
+        }
+      }
+      return;
+    }
+
+    stepBallPhysics(b, dt, (imp, px, py, nx, ny, w) => this.onWallHit(imp, px, py, nx, ny, w));
+
+    // loose ball vs players: trap it if slow enough, otherwise it deflects off the body
+    let hit = null, hd = Infinity;
+    for (const a of this.agents) {
+      if (a.kickCD > 0) continue;
+      const d = Math.hypot(b.x - a.x(), b.y - a.y());
+      if (d < PR + BR && d < hd) { hd = d; hit = a; }
+    }
+    if (!hit) return;
+    const a = hit;
+    const rvx = b.vx - a.body.velocity.x, rvy = b.vy - a.body.velocity.y;
+    const rel = Math.hypot(rvx, rvy);
+    if (rel < (a.gk ? GK_CATCH_SPEED : CONTROL_SPEED)) { this.possess(a); return; }
+    const nx = (b.x - a.x()) / (hd || 1), ny = (b.y - a.y()) / (hd || 1);
+    b.x = a.x() + nx * (PR + BR); b.y = a.y() + ny * (PR + BR);
+    const vn = rvx * nx + rvy * ny;
+    if (vn < 0) { b.vx -= 1.45 * vn * nx; b.vy -= 1.45 * vn * ny; }
+    b.lastTouchTeam = a.team;
+    a.kickCD = 0.12;
+    this.tone(200, 0.05, 0.12, 'sine', 90);
+  }
+
+  onWallHit(imp, px, py, nx, ny, w) {
+    const b = this.ball;
+    if (w.kind !== 'mesh' || b.x < PITCH.L || b.x > PITCH.R) return;
+    if (imp > 60) b.wallHits++;
+    if (imp < 30) return;
+    const k = clamp(imp / 700, 0, 1);
+    this.sparks.push({ x: px, y: py, nx, ny, k, t: 0, life: 0.25 + 0.3 * k });
+    if (imp > 140) this.flash(0.05 + 0.2 * k);
+    this.sfxWall(k);
+  }
+
+  flash(alpha) {
+    this.tweens.killTweensOf(this.flashRect);
+    this.flashRect.setAlpha(Math.max(this.flashRect.alpha, alpha));
+    this.tweens.add({ targets: this.flashRect, alpha: 0, duration: 180 });
+  }
+
+  checkGoal() {
+    const b = this.ball;
+    if (Math.abs(b.y - CY) >= GOAL_HALF) return;
+    if (b.x < PITCH.L - BR) this.goalScored(AWAY);
+    else if (b.x > PITCH.R + BR) this.goalScored(HOME);
+  }
+
+  // -------------------------------------------------------------------
+  // AI — finite state machine, one per agent
+  //   IDLE → hold shape · SUPPORT → offer an angle · CHASE → go get it
+  //   ATTACK → carry, shoot (direct or off the cage), pass · DEFEND → goal-side line
+  // -------------------------------------------------------------------
+  rankToBall(a) {
+    const b = this.ball, d = Math.hypot(a.x() - b.x, a.y() - b.y);
+    let rank = 0;
+    for (const m of this.teams[a.team]) {
+      if (m === a || m.gk) continue;
+      if (Math.hypot(m.x() - b.x, m.y() - b.y) < d) rank++;
+    }
+    return rank;
+  }
+
+  goalSide(a) { return (a.x() - this.ball.x) * TEAMS[a.team].dir < 0; }
+
+  desiredState(a) {
+    const b = this.ball, o = b.owner;
+    if (o === a) return 'ATTACK';
+    if (b.passTarget === a) return 'CHASE';
+    const dBall = Math.hypot(a.x() - b.x, a.y() - b.y);
+    if (a.gk) {
+      const dGoal = Math.hypot(b.x - ownGoalX(a.team), b.y - CY);
+      // rush a carrier or a slow loose ball; against a struck shot the keeper sets instead
+      const slowLoose = !o && Math.hypot(b.vx, b.vy) < 260;
+      if ((slowLoose || (o && o.team !== a.team)) && dGoal < GK_RUSH_RANGE) return 'CHASE';
+      if (o && o.team === a.team) return 'IDLE';
+      const ownHalf = (b.x - CX) * TEAMS[a.team].dir < 0;
+      return ownHalf || o ? 'DEFEND' : 'IDLE';
+    }
+    const rank = this.rankToBall(a);
+    if (!o) return (rank === 0 || (rank === 1 && dBall < 200)) ? 'CHASE' : 'IDLE';
+    if (o.team === a.team) return 'SUPPORT';
+    if (rank === 0 || (rank === 1 && dBall < 130)) return 'CHASE';
+    return this.goalSide(a) ? 'DEFEND' : 'IDLE';
+  }
+
+  think(a, immediate) {
+    const s = this.desiredState(a);
+    if (s === a.state) a.pending = null;
+    else if (immediate || s === 'ATTACK' || a.state === 'ATTACK' || (s === 'CHASE' && this.ball.passTarget === a)) {
+      a.state = s; a.pending = null;
+    } else if (a.pending !== s) {
+      a.pending = s;
+      a.pendingT = 0.05 + 0.45 * (1 - AI_DIFFICULTY);   // reaction delay
+    }
+    if (a.gk) a.gkY = CY + clamp((this.ball.y - CY) * 0.5, -GOAL_HALF + 14, GOAL_HALF - 14);
+    if (a.state === 'ATTACK' && !a.isHuman) this.attackDecision(a);
+  }
+
+  pop(a, text) { a.popText = text; a.popT = 1.1; }
+
+  attackDecision(a) {
+    if (a.possessT < 0.35 || this.drill) return;
+    const noise = (Math.random() - 0.5) * 0.12 * (1 - AI_DIFFICULTY);
+    if (a.gk) {
+      if (a.possessT < 0.6) return;
+      const p = this.evalPass(a, true);
+      if (p) { this.pop(a, 'DISTRIBUTE'); this.passTo(a, p); return; }
+      this.pop(a, 'CLEAR');
+      this.kick(a, (a.team === HOME ? 0 : Math.PI) + (a.y() < CY ? 0.5 : -0.5), 720);
+      return;
+    }
+    const shot = this.evalShot(a);
+    if (shot) {
+      this.pop(a, shot.bank ? 'BANK SHOT' : 'SHOOT');
+      this.kick(a, shot.angle + noise, BALL.SHOT_MAX * (0.82 + 0.18 * AI_DIFFICULTY));
+      return;
+    }
+    const p = this.evalPass(a, false);
+    if (p && a.possessT > 0.45) { this.pop(a, 'PASS'); this.passTo(a, p); }
+  }
+
+  // Shot options: direct to three spots in the goal, or banked off the top/bottom mesh.
+  // Bank aim uses the mirror-image trick: reflect the target across the wall line
+  // (offset by ball radius) and shoot straight at the reflection — exact, since
+  // our rebound preserves angle.
+  evalShot(a) {
+    const b = this.ball, dir = TEAMS[a.team].dir;
+    const gx = oppGoalX(a.team) + dir * 12;
+    if (Math.hypot(gx - b.x, CY - b.y) > 470) return null;
+    const opps = this.teams[1 - a.team];
+    const clearance = path => {
+      let m = Infinity;
+      for (const o of opps) for (let i = 0; i < path.length - 1; i++)
+        m = Math.min(m, distToSeg(o.x(), o.y(), path[i].x, path[i].y, path[i + 1].x, path[i + 1].y));
+      return m;
+    };
+    let best = null;
+    const consider = (path, angle, bank) => {
+      let L = 0;
+      for (let i = 0; i < path.length - 1; i++) L += Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
+      if (L > (bank ? 720 : 470)) return;
+      const c = clearance(path);
+      if (c < PR + BR + 8) return;
+      const score = Math.min(c, 90) - L * 0.04 - (bank ? 8 : 0);
+      if (!best || score > best.score) best = { angle, bank, score };
+    };
+    for (const ty of [CY - GOAL_HALF + 20, CY, CY + GOAL_HALF - 20]) {
+      consider([{ x: b.x, y: b.y }, { x: gx, y: ty }], Math.atan2(ty - b.y, gx - b.x), false);
+      for (const wy of [PITCH.T + BR, PITCH.B - BR]) {
+        const my = 2 * wy - ty;
+        const t = (wy - b.y) / (my - b.y);
+        if (!(t > 0.08 && t < 0.92)) continue;
+        const ix = b.x + (gx - b.x) * t;
+        if ((ix - b.x) * dir < 20) continue;
+        if (Math.atan2(Math.abs(gx - b.x), Math.abs(my - b.y)) > Phaser.Math.DegToRad(58)) continue;
+        consider([{ x: b.x, y: b.y }, { x: ix, y: wy }, { x: gx, y: ty }], Math.atan2(my - b.y, gx - b.x), true);
+      }
+    }
+    return best;
+  }
+
+  evalPass(a, relaxed) {
+    const b = this.ball, dir = TEAMS[a.team].dir, opps = this.teams[1 - a.team];
+    let pressure = Infinity;
+    for (const o of opps) pressure = Math.min(pressure, Math.hypot(o.x() - a.x(), o.y() - a.y()));
+    let best = null;
+    for (const m of this.teams[a.team]) {
+      if (m === a || m.gk) continue;
+      const d = Math.hypot(m.x() - b.x, m.y() - b.y);
+      if (d < 70 || d > 480) continue;
+      let clr = Infinity, open = Infinity;
+      for (const o of opps) {
+        clr = Math.min(clr, distToSeg(o.x(), o.y(), b.x, b.y, m.x(), m.y()));
+        open = Math.min(open, Math.hypot(o.x() - m.x(), o.y() - m.y()));
+      }
+      if (clr < 32) continue;
+      const fwd = (m.x() - a.x()) * dir;
+      const score = fwd + Math.min(open, 200) * 0.6 - d * 0.2;
+      if (!best || score > best.score) best = { m, fwd, open, score };
+    }
+    if (!best) return null;
+    if (relaxed || pressure < 70 || (best.fwd > 110 && best.open > 100)) return best.m;
+    return null;
+  }
+
+  slotXY(a, extraU = 0) {
+    const b = this.ball, dir = TEAMS[a.team].dir;
+    const bu = dir > 0 ? (b.x - PITCH.L) / PW : (PITCH.R - b.x) / PW;
+    const bv = (b.y - PITCH.T) / PH;
+    const u = clamp(a.slotU + extraU + (bu - 0.5) * 0.45, 0.08, 0.88);
+    const v = clamp(a.slotV + (bv - 0.5) * 0.3, 0.1, 0.9);
+    return uvToXY(a.team, u, v);
+  }
+
+  updateAgent(a, dt) {
+    if (a.pending && (a.pendingT -= dt) <= 0) { a.state = a.pending; a.pending = null; }
+    const b = this.ball, d = AI_DIFFICULTY, dir = TEAMS[a.team].dir;
+    if (b.owner === a && a.state !== 'ATTACK') { a.state = 'ATTACK'; a.pending = null; }
+    if (this.drill) { this.move(a, 0, 0, 0, dt); this.faceBall(a); return; }
+
+    const chaseSpeed = JOG + (SPRINT - JOG) * (0.35 + 0.65 * d);
+    const defendSpeed = JOG + (SPRINT - JOG) * (0.2 + 0.5 * d);
+
+    if (a.gk) {
+      const gx = ownGoalX(a.team) + dir * 24;
+      const gkSpeed = 140 + 70 * d;
+      if (a.state === 'CHASE') { const lead = b.owner ? 0 : 0.2; this.moveTo(a, b.x + b.vx * lead, b.y + b.vy * lead, chaseSpeed, dt); }
+      else if (a.state === 'ATTACK') this.moveTo(a, gx + dir * 30, CY, 100, dt);
+      else { this.moveTo(a, gx, a.state === 'DEFEND' ? a.gkY : CY, gkSpeed, dt); }
+      if (a.speed < 20) this.faceBall(a);
+      return;
+    }
+
+    switch (a.state) {
+      case 'CHASE': {
+        const lead = b.owner ? 0 : 0.25;
+        this.moveTo(a, b.x + b.vx * lead, b.y + b.vy * lead, chaseSpeed, dt);
+        break;
+      }
+      case 'ATTACK': {
+        const gx = oppGoalX(a.team) - dir * 40;
+        let vx = gx - a.x(), vy = (CY - a.y()) * 0.8;
+        const l = Math.hypot(vx, vy) || 1; vx /= l; vy /= l;
+        for (const o of this.teams[1 - a.team]) {
+          const dx = a.x() - o.x(), dy = a.y() - o.y(), dd = Math.hypot(dx, dy) || 1;
+          if (dd < 130 && (o.x() - a.x()) * dir > -20) { const w = (130 - dd) / 130 * 1.4; vx += dx / dd * w; vy += dy / dd * w; }
+        }
+        if (a.y() < PITCH.T + 40) vy += 0.6;
+        if (a.y() > PITCH.B - 40) vy -= 0.6;
+        this.move(a, vx, vy, 175 * DRIBBLE_MULT, dt);
+        break;
+      }
+      case 'DEFEND': {
+        const gx = ownGoalX(a.team);
+        const bx = b.x - gx, by = b.y - CY, bl = Math.hypot(bx, by) || 1;
+        const off = (a.slotV - 0.5) * 140;
+        const tx = clamp(gx + bx * 0.5 + (-by / bl) * off, PITCH.L + 20, PITCH.R - 20);
+        const ty = clamp(CY + by * 0.5 + (bx / bl) * off, PITCH.T + 20, PITCH.B - 20);
+        this.moveTo(a, tx, ty, defendSpeed, dt);
+        break;
+      }
+      case 'SUPPORT': {
+        const s = this.slotXY(a, 0.12), o = b.owner;
+        if (o) {
+          const dx = s.x - o.x(), dy = s.y - o.y(), dd = Math.hypot(dx, dy) || 1;
+          if (dd < 150) { s.x = o.x() + dx / dd * 150; s.y = o.y() + dy / dd * 150; }
+        }
+        this.moveTo(a, clamp(s.x, PITCH.L + 20, PITCH.R - 20), clamp(s.y, PITCH.T + 20, PITCH.B - 20), 185, dt);
+        break;
+      }
+      default: { // IDLE
+        const s = this.slotXY(a);
+        this.moveTo(a, s.x, s.y, JOG * 0.9, dt);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Rendering (dynamic layer redrawn every frame)
+  // -------------------------------------------------------------------
+  updateFx(dt) {
+    for (const s of this.sparks) s.t += dt;
+    this.sparks = this.sparks.filter(s => s.t < s.life);
+  }
+
+  render() {
+    const g = this.dynG, f = this.fxG, b = this.ball;
+    g.clear(); f.clear();
+
+    // wall-hit sparks: mesh glow along the wall + expanding ring
+    for (const s of this.sparks) {
+      const p = s.t / s.life, al = 1 - p;
+      const tx = -s.ny, ty = s.nx, len = 24 + 70 * s.k;
+      f.lineStyle(4 + 5 * s.k, ACCENT, 0.8 * al);
+      f.lineBetween(s.x - tx * len, s.y - ty * len, s.x + tx * len, s.y + ty * len);
+      f.lineStyle(2, 0xffffff, al);
+      f.strokeCircle(s.x, s.y, 6 + p * (20 + 40 * s.k));
+    }
+
+    // aim preview while charging — shows the rebound before you commit
+    if (this.charging && this.chargeT > TAP_TIME && b.owner === this.human) {
+      const fill = Math.min(1, this.chargeT / CHARGE_TIME);
+      const pr = predictPath(b.x, b.y, this.shotAngle(this.human), BALL.SHOT_MAX * (0.3 + 0.7 * fill), 1.3);
+      const n = pr.pts.length;
+      for (let i = 2; i < n; i += 3) {
+        g.fillStyle(pr.goal ? ACCENT : 0xffffff, 0.75 * (1 - i / n) + 0.1);
+        g.fillCircle(pr.pts[i].x, pr.pts[i].y, 2.2);
+      }
+      for (const bp of pr.bounces) { g.lineStyle(2, ACCENT, 0.9); g.strokeCircle(bp.x, bp.y, 8); }
+    }
+
+    for (const a of this.agents) {
+      const x = a.x(), y = a.y(), fa = a.facing;
+      // facing wedge
+      g.fillStyle(0xF4F4F4, 0.95);
+      g.fillTriangle(
+        x + Math.cos(fa) * (PR + 6), y + Math.sin(fa) * (PR + 6),
+        x + Math.cos(fa + 0.55) * (PR - 3), y + Math.sin(fa + 0.55) * (PR - 3),
+        x + Math.cos(fa - 0.55) * (PR - 3), y + Math.sin(fa - 0.55) * (PR - 3));
+      if (a.gk) { g.lineStyle(2, 0xffffff, 0.5); g.strokeCircle(x, y, PR - 5); }
+      if (a.isHuman) { g.lineStyle(3, ACCENT, 1); g.strokeCircle(x, y, PR + 5); }
+
+      const txt = a.isHuman ? '' : (a.popT > 0 ? a.popText : a.state);
+      if (a.label.text !== txt) a.label.setText(txt);
+      const col = a.popT > 0 ? '#FFFFFF' : '#FFD400';
+      if (a.labelCol !== col) { a.labelCol = col; a.label.setColor(col); }
+      a.label.setPosition(x, y - PR - 4);
+    }
+
+    // ball
+    g.fillStyle(0x000000, 0.35); g.fillCircle(b.x + 2, b.y + 3, BR);
+    g.fillStyle(0xFFFFFF, 1); g.fillCircle(b.x, b.y, BR);
+    g.lineStyle(2, 0x1A1A1F, 1); g.strokeCircle(b.x, b.y, BR);
+
+    // power bar above the controlled player
+    if (this.charging && this.chargeT > TAP_TIME) {
+      const h = this.human, fill = Math.min(1, this.chargeT / CHARGE_TIME);
+      const bx = h.x() - 22, by = h.y() - PR - 18;
+      g.fillStyle(0x000000, 0.7); g.fillRect(bx - 2, by - 2, 48, 10);
+      g.fillStyle(ACCENT, 1); g.fillRect(bx, by, 44 * fill, 6);
+    }
+
+    const s = Math.ceil(this.clock);
+    this.timerTxt.setText(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+    this.timerTxt.setColor(this.clock <= 10 && this.phase === 'play' ? '#FFD400' : '#FFFFFF');
+    this.diffTxt.setText(`AI_DIFFICULTY ${AI_DIFFICULTY.toFixed(1)}  [ / ]`);
+  }
+}
+
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'game',
+  width: W, height: H,
+  backgroundColor: '#0B0B0F',
+  physics: { default: 'arcade', arcade: { debug: false } },
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: [Match],
+});
+</script>
+</body>
+</html>

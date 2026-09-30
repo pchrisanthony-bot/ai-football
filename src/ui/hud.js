@@ -1,0 +1,205 @@
+// In-match HUD (DOM): broadcast score bug, style/GAMEBREAKER meters, callouts,
+// controlled-player tag with power + stamina, radar, and the AI debug overlay.
+import * as THREE from 'three';
+import { COURT, STYLE } from '../config.js';
+
+const h = (tag, cls, html = '') => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+export class HUD {
+  constructor(root) {
+    this.root = h('div', 'hud');
+    root.appendChild(this.root);
+    this.v = new THREE.Vector3();
+    this.labels = new Map();
+    this.debug = false;
+  }
+
+  bind(match, camera) {
+    this.m = match; this.cam = camera; this.inReplay = false;
+    const [A, B] = match.teams;
+    this.root.innerHTML = '';
+    this.root.classList.remove('hidden');
+    const mode = { timed: 'TIMED', firstto: `FIRST TO ${match.opts.firstTo}`, lms: 'LAST MAN STANDING', drill: 'TRICK-SHOT DRILL' }[match.opts.mode] || '';
+    this.bug = h('div', 'bug', `
+      <div class="bug-logo">SC</div>
+      <div class="bug-team" style="--c:${A.def.kit.shirt}"><span>${A.def.short}</span></div>
+      <div class="bug-score"><b class="s0">0</b><i>–</i><b class="s1">0</b></div>
+      <div class="bug-team" style="--c:${B.def.kit.shirt}"><span>${B.def.short}</span></div>
+      <div class="bug-clock">0:00</div>
+      <div class="bug-mode">${mode}</div>`);
+    this.root.appendChild(this.bug);
+    this.s0 = this.bug.querySelector('.s0'); this.s1 = this.bug.querySelector('.s1'); this.clock = this.bug.querySelector('.bug-clock');
+
+    this.meters = [0, 1].map(t => {
+      const T = match.teams[t];
+      const el = h('div', `meter meter-${t}`, `<div class="meter-name">${T.def.name}</div><div class="meter-bar"><div class="meter-fill" style="background:${T.def.kit.shirt}"></div></div><div class="meter-label">STYLE</div>`);
+      this.root.appendChild(el);
+      return { el, fill: el.querySelector('.meter-fill'), label: el.querySelector('.meter-label') };
+    });
+    this.center = h('div', 'callout');
+    this.feed = h('div', 'feed');
+    this.banner = h('div', 'banner');
+    this.replayTag = h('div', 'replay-tag hidden', '<span class="rec"></span>REPLAY <small>press any key to skip</small>');
+    this.tag = h('div', 'ptag hidden', '<div class="ptag-name"></div><div class="ptag-power"><div></div></div><div class="ptag-stam"><div></div></div>');
+    this.tagName = this.tag.querySelector('.ptag-name'); this.tagPow = this.tag.querySelector('.ptag-power'); this.tagPowFill = this.tagPow.firstChild; this.tagStam = this.tag.querySelector('.ptag-stam div');
+    this.flashEl = h('div', 'flash');
+    this.radar = h('canvas', 'radar'); this.radar.width = 256; this.radar.height = 144;
+    this.dbg = h('div', 'dbg');
+    this.dbgLegend = h('div', 'dbg-legend hidden', `<b>AI DEBUG</b> — each tag is one autonomous agent: <i>STATE</i> · chosen action · top utility scores. <kbd>Tab</kbd> to hide`);
+    this.hint = h('div', 'hint', '<kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>J</kbd> pass <kbd>K</kbd> shoot (hold) <kbd>L</kbd> through <kbd>I</kbd> lob <kbd>Space</kbd> close control <kbd>Q E F R U</kbd> skills <kbd>Tab</kbd> AI view <kbd>Esc</kbd> pause');
+    this.root.append(this.center, this.feed, this.banner, this.replayTag, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.hint);
+    this.labels.clear();
+    this.setDebug(this.debug);
+    this.lastScore = [0, 0];
+  }
+
+  hide() { this.root.classList.add('hidden'); }
+  show() { this.root.classList.remove('hidden'); }
+
+  setDebug(on) {
+    this.debug = on;
+    this.dbg.classList.toggle('hidden', !on);
+    this.dbgLegend?.classList.toggle('hidden', !on);
+  }
+
+  project(x, y, z) {
+    this.v.set(x, y, z).project(this.cam);
+    return { x: (this.v.x * 0.5 + 0.5) * innerWidth, y: (-this.v.y * 0.5 + 0.5) * innerHeight, vis: this.v.z < 1 };
+  }
+
+  flash(a) {
+    this.flashEl.style.transition = 'none';
+    this.flashEl.style.opacity = a;
+    requestAnimationFrame(() => { this.flashEl.style.transition = 'opacity .35s'; this.flashEl.style.opacity = 0; });
+  }
+
+  callout(text, color = '#FFD400', dur = 1.3) {
+    const e = h('div', 'callout-text', text);
+    e.style.color = color;
+    this.center.appendChild(e);
+    setTimeout(() => e.remove(), dur * 1000);
+  }
+
+  style(label, pts, color) {
+    const e = h('div', 'feed-item', `<b>+${pts}</b> ${label}`);
+    e.style.setProperty('--c', color);
+    this.feed.prepend(e);
+    while (this.feed.children.length > 4) this.feed.lastChild.remove();
+    setTimeout(() => e.classList.add('out'), 1800);
+    setTimeout(() => e.remove(), 2300);
+    if (label === 'PANNA!') this.callout('PANNA!', '#FF3B6B', 1.4);
+  }
+
+  gamebreaker(team) {
+    const T = this.m.teams[team];
+    this.banner.innerHTML = `<div class="gb" style="--c:${T.def.kit.shirt}">GAMEBREAKER<small>${T.def.name}</small></div>`;
+    this.banner.classList.add('show');
+    setTimeout(() => this.banner.classList.remove('show'), 2200);
+  }
+
+  goal(info, match) {
+    const T = match.teams[info.team];
+    const scorer = match.players.find(p => p.id === info.scorer);
+    const title = info.cage ? 'CAGE GOAL!' : info.own ? 'OWN GOAL' : 'GOAL!';
+    const sub = scorer ? `${scorer.name.toUpperCase()} <span>#${scorer.number}</span>${info.cage ? ` · off the mesh${info.wallHits > 1 ? ' ×' + info.wallHits : ''}` : ''}` : '';
+    this.banner.innerHTML = `<div class="goal ${info.cage ? 'cage' : ''}" style="--c:${T.def.kit.shirt}"><div class="goal-t">${title}</div><div class="goal-s">${sub}</div></div>`;
+    this.banner.classList.add('show');
+    setTimeout(() => this.banner.classList.remove('show'), 2600);
+  }
+
+  big(text, sub = '', ms = 900) {
+    this.banner.innerHTML = `<div class="big">${text}${sub ? `<small>${sub}</small>` : ''}</div>`;
+    this.banner.classList.add('show');
+    clearTimeout(this._bigT);
+    if (ms) this._bigT = setTimeout(() => this.banner.classList.remove('show'), ms);
+  }
+  clearBig() { this.banner.classList.remove('show'); }
+
+  setReplay(on) {
+    this.replayTag.classList.toggle('hidden', !on);
+    this.inReplay = on;
+    for (const el of [this.dbg, this.dbgLegend, this.radar, this.tag, this.hint]) el?.classList.toggle('replay-hide', on);
+  }
+  setSpectate(on) { this.hint?.classList.toggle('hidden', on); }
+
+  update(dt, human) {
+    const m = this.m;
+    if (!m || this.inReplay) return;
+    const [A, B] = m.teams;
+    if (A.score !== this.lastScore[0]) { this.s0.textContent = A.score; this.pop(this.s0); }
+    if (B.score !== this.lastScore[1]) { this.s1.textContent = B.score; this.pop(this.s1); }
+    this.lastScore = [A.score, B.score];
+    this.clock.textContent = m.opts.mode === 'timed' ? fmt(Math.max(0, m.clock)) : fmt(m.opts.seconds - m.clock);
+    this.clock.classList.toggle('late', m.opts.mode === 'timed' && m.clock < 15 && m.phase === 'play');
+
+    m.teams.forEach((T, i) => {
+      const mt = this.meters[i];
+      const gb = T.gb > 0;
+      mt.fill.style.width = `${gb ? (T.gb / STYLE.gamebreakerSecs) * 100 : (T.style / STYLE.meterMax) * 100}%`;
+      mt.el.classList.toggle('gb-on', gb);
+      mt.label.textContent = gb ? `GAMEBREAKER ${Math.ceil(T.gb)}` : 'STYLE';
+    });
+
+    // controlled player tag
+    const p = m.human;
+    if (p && p.active && m.phase !== 'fulltime') {
+      const s = this.project(p.x, 2.55, p.z);
+      this.tag.classList.toggle('hidden', !s.vis);
+      this.tag.style.transform = `translate(${s.x}px, ${s.y}px) translate(-50%, -100%)`;
+      const nm = `${p.number} · ${p.name.toUpperCase()}`;
+      if (this.tagName.textContent !== nm) this.tagName.textContent = nm;
+      const c = human ? human.chargeLevel() : 0;
+      this.tagPow.classList.toggle('on', c > 0);
+      this.tagPowFill.style.width = `${c * 100}%`;
+      this.tagPowFill.classList.toggle('max', c >= 0.98);
+      this.tagStam.style.width = `${p.stamina * 100}%`;
+    } else this.tag.classList.add('hidden');
+
+    this.drawRadar();
+    if (this.debug) this.drawDebug();
+  }
+
+  pop(el) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+
+  drawRadar() {
+    const c = this.radar.getContext('2d'), m = this.m;
+    const W = this.radar.width, H = this.radar.height;
+    c.clearRect(0, 0, W, H);
+    c.fillStyle = 'rgba(8,10,16,0.72)'; c.fillRect(0, 0, W, H);
+    c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = 2;
+    c.strokeRect(6, 6, W - 12, H - 12);
+    c.beginPath(); c.moveTo(W / 2, 6); c.lineTo(W / 2, H - 6); c.stroke();
+    c.beginPath(); c.arc(W / 2, H / 2, 16, 0, Math.PI * 2); c.stroke();
+    const X = x => 6 + (x + COURT.halfL) / (COURT.halfL * 2) * (W - 12);
+    const Z = z => 6 + (z + COURT.halfW) / (COURT.halfW * 2) * (H - 12);
+    for (const p of m.players) {
+      if (!p.active) continue;
+      c.fillStyle = m.teams[p.team].def.kit.shirt;
+      c.beginPath(); c.arc(X(p.x), Z(p.z), p === m.human ? 6 : 4.5, 0, Math.PI * 2); c.fill();
+      if (p === m.human) { c.strokeStyle = '#FFD400'; c.lineWidth = 2; c.stroke(); }
+    }
+    c.fillStyle = '#fff';
+    c.beginPath(); c.arc(X(m.ball.x), Z(m.ball.z), 3.5, 0, Math.PI * 2); c.fill();
+  }
+
+  drawDebug() {
+    const m = this.m;
+    const seen = new Set();
+    for (const p of m.players) {
+      if (!p.active || p.human) continue;
+      seen.add(p.id);
+      let el = this.labels.get(p.id);
+      if (!el) { el = h('div', 'dbg-tag'); this.dbg.appendChild(el); this.labels.set(p.id, el); }
+      const s = this.project(p.x, 2.3, p.z);
+      el.style.transform = `translate(${s.x}px, ${s.y}px) translate(-50%, -100%)`;
+      el.style.display = s.vis ? '' : 'none';
+      const ai = p.ai;
+      const opts = ai.state === 'ATTACK' && ai.options ? ai.options.slice(0, 3).map(o => `${o.label.toLowerCase()} ${o.u}`).join(' · ') : '';
+      const pop = ai.pop ? `<em>${ai.pop.text}</em>` : '';
+      const html = `<b style="--c:${m.teams[p.team].def.kit.shirt}">${ai.label || ai.state}</b>${pop}${opts ? `<small>${opts}</small>` : ''}`;
+      if (el._h !== html) { el.innerHTML = html; el._h = html; }
+    }
+    for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); }
+  }
+}
