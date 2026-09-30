@@ -211,14 +211,16 @@ export class MatchView {
         case 'tackle': audio.tackle(e.ok); if (e.slide) { audio.slide(); fx.puff(e.x, e.z, 10, 0.6); } break;
         case 'trip': audio.tackle(true); break;
         case 'header': audio.kick(0.4); break;
-        case 'style': hud.style(e.label, e.pts, m.teams[e.team].def.kit.shirt); audio.style(e.pts); break;
+        case 'style': hud.style(e.label, e.pts, m.teams[e.team].def.kit.shirt); audio.style(e.pts); venue.react?.('skill', m.teams[e.team].def.kit.trim); break;
         case 'panna': audio.crowdOoh(1.2); break;
-        case 'gamebreaker': audio.gamebreaker(); hud.gamebreaker(e.team); rig.shake(0.3, 0.6); break;
+        case 'gamebreaker': audio.gamebreaker(); hud.gamebreaker(e.team); rig.shake(0.3, 0.6); venue.react?.('gb', m.teams[e.team].def.kit.trim); break;
+        case 'gbEnd': venue.react?.('gbEnd'); break;
         case 'gbReady': audio.gbReady(); hud.callout(m.opts.humanTeam === e.team ? 'GAMEBREAKER READY' : 'THEY HAVE A GAMEBREAKER', '#FFD400', 1.4); break;
         case 'gbStrike': audio.gbStrike(); rig.shake(0.2, 0.5); break;
         case 'whistle': audio.whistle(e.kind === 'end'); break;
         case 'goal': {
           audio.goal();
+          venue.react?.('goal', m.teams[e.team].def.kit.shirt);
           rig.shake(0.45, 0.8);
           hud.flash(0.35);
           const T = m.teams[e.team];

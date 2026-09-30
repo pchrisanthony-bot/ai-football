@@ -275,3 +275,62 @@ export function radialTexture(inner = 'rgba(255,255,255,1)', outer = 'rgba(255,2
     return tex(c, { aniso: 1 });
   });
 }
+
+// A hand-painted bedsheet banner zip-tied to the fence: this court belongs to the
+// people who play on it ("pirate radio" atmosphere, not a sanctioned venue).
+export function bannerTexture(lines = ['NO REFS', 'NO RULES', 'JUST THE CAGE']) {
+  return once('banner', () => {
+    const W = 1024, H = 200, c = canvas(W, H), g = c.getContext('2d');
+    const r = rng(77);
+    // off-white sheet with stains and a torn edge
+    g.fillStyle = '#e9e3d6'; g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(${120 + r() * 60},${100 + r() * 50},${70 + r() * 40},${0.04 + r() * 0.06})`; g.beginPath(); g.ellipse(r() * W, r() * H, 20 + r() * 90, 10 + r() * 40, r() * 3, 0, Math.PI * 2); g.fill(); }
+    g.globalCompositeOperation = 'destination-out';
+    for (let x = 0; x < W; x += 6) { g.fillRect(x, 0, 6, r() * 7); g.fillRect(x, H - r() * 7, 6, 10); }
+    g.globalCompositeOperation = 'source-over';
+    // brush lettering with drips
+    const txt = lines.join('  ·  ');
+    g.font = 'italic 900 92px Impact, "Arial Black", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#c4161c';
+    g.save(); g.translate(W / 2, H / 2 + 4); g.rotate(-0.02); g.fillText(txt, 0, 0, W - 60); g.restore();
+    for (let i = 0; i < 26; i++) { const x = 60 + r() * (W - 120), y = H / 2 + 20 + r() * 20; g.fillStyle = 'rgba(196,22,28,.85)'; g.fillRect(x, y, 3 + r() * 3, 12 + r() * 40); g.beginPath(); g.arc(x + 2.5, y + 12 + r() * 40, 3, 0, Math.PI * 2); g.fill(); }
+    // zip-tie holes
+    g.fillStyle = '#222';
+    for (const x of [16, W / 2, W - 16]) { g.beginPath(); g.arc(x, 14, 6, 0, Math.PI * 2); g.fill(); }
+    return tex(c);
+  });
+}
+
+// A spray-painted tag for the court or a wall (transparent, soft overspray, drips).
+export function sprayTag(key, word, color = '#FFD400', { w = 512, h = 256, crown = false, arrow = false, stencil = false } = {}) {
+  return once('tag_' + key, () => {
+    const c = canvas(w, h), g = c.getContext('2d');
+    const r = rng(key.length * 31 + word.length);
+    // overspray
+    for (let i = 0; i < 900; i++) { g.fillStyle = color; g.globalAlpha = r() * 0.25; g.fillRect(w * 0.1 + r() * w * 0.8, h * 0.2 + r() * h * 0.6, 2, 2); }
+    g.globalAlpha = 1;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `${stencil ? '' : 'italic '}900 ${h * 0.55}px ${stencil ? '"Arial Black", Impact' : 'Impact, "Arial Black"'}, sans-serif`;
+    g.shadowColor = color; g.shadowBlur = 14;
+    g.lineWidth = stencil ? 0 : 10; g.strokeStyle = '#0b0b0e';
+    if (!stencil) g.strokeText(word, w / 2, h / 2 + 6, w * 0.86);
+    g.fillStyle = color; g.fillText(word, w / 2, h / 2, w * 0.86);
+    g.shadowBlur = 0;
+    if (stencil) { g.globalCompositeOperation = 'destination-out'; g.fillRect(0, h / 2 - 3, w, 6); g.globalCompositeOperation = 'source-over'; }
+    if (crown) {
+      g.fillStyle = color; g.beginPath();
+      const cx = w / 2, cy = h * 0.12;
+      g.moveTo(cx - 60, cy + 34); g.lineTo(cx - 60, cy + 4); g.lineTo(cx - 30, cy + 22); g.lineTo(cx, cy - 8); g.lineTo(cx + 30, cy + 22); g.lineTo(cx + 60, cy + 4); g.lineTo(cx + 60, cy + 34); g.closePath(); g.fill();
+    }
+    if (arrow) {
+      g.strokeStyle = color; g.lineWidth = 16; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(w * 0.2, h * 0.9); g.lineTo(w * 0.8, h * 0.9); g.stroke();
+      g.beginPath(); g.moveTo(w * 0.7, h * 0.78); g.lineTo(w * 0.82, h * 0.9); g.lineTo(w * 0.7, h * 1.02); g.stroke();
+    }
+    // drips
+    for (let i = 0; i < 10; i++) { const x = w * 0.15 + r() * w * 0.7, y = h * 0.62 + r() * h * 0.1; g.fillStyle = color; g.globalAlpha = 0.85; g.fillRect(x, y, 3, 8 + r() * h * 0.22); }
+    g.globalAlpha = 1;
+    return tex(c);
+  });
+}

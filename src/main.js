@@ -112,6 +112,7 @@ function toTitle() {
   });
   G.menu.onNav = nav;
   audio.music(true);
+  audio.radio(false);
   audio.setCrowd(0.02);
 }
 
@@ -180,6 +181,7 @@ function beginMatch() {
   hud.setSpectate(G.spectate);
   G.state = 'intro'; G.stateT = 0;
   audio.music(false);
+  audio.radio(true);
   audio.setCrowd(0.05);
 }
 
@@ -336,6 +338,7 @@ function toDrill() {
   setupDrill();
   G.state = 'match';
   audio.music(false);
+  audio.radio(true);
   hud.big('TRICK-SHOT DRILL', 'Lane blocked — hold K and aim at the FAR wall: it comes back behind the keeper', 3200);
 }
 
@@ -484,6 +487,7 @@ function tick(dt) {
   }
   rig.zoomBias = (innerHeight < 520 ? -3 : 0) - (G.slow > 0 && G.state === 'match' ? 4 : 0);
 
+  venue.setBeat(audio.beatLevel());
   venue.update(G.t, R.camera);
   fx.update(dt);
   rig.apply(dt);

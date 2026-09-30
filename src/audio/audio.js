@@ -27,6 +27,8 @@ export class Audio {
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.startCrowd();
     this.startMusic();
+    this.startAmbient();
+    if (this.radioOn) this.radio(true);   // a match may have started before the first tap
   }
 
   get t() { return this.ctx ? this.ctx.currentTime : 0; }
@@ -171,6 +173,22 @@ export class Audio {
   // ------------------------------------------------------------ music (menus)
   startMusic() {
     const ctx = this.ctx;
+    // One source, two outputs: clean for the menus, and a lo-fi "boombox on the roof"
+    // for matches (band-limited, a little crunchy, with vinyl hiss).
+    this.musicIn = ctx.createGain();
+    this.musicIn.connect(this.musicBus);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 380;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2300;
+    const sh = ctx.createWaveShaper();
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 2.2); }
+    sh.curve = curve;
+    this.radioGain = ctx.createGain(); this.radioGain.gain.value = 0;
+    this.musicIn.connect(hp).connect(lp).connect(sh).connect(this.radioGain).connect(this.master);
+    const hiss = this.noiseSrc(true), hf = ctx.createBiquadFilter(), hg = ctx.createGain();
+    hf.type = 'highpass'; hf.frequency.value = 5000; hg.gain.value = 0.05;
+    hiss.connect(hf).connect(hg).connect(this.radioGain); hiss.start();
+    this.kicks = [];
     this.bpm = 92;
     this.step = 0;
     this.nextT = ctx.currentTime + 0.1;
@@ -185,7 +203,8 @@ export class Audio {
       if (!this.ctx) return;
       while (this.nextT < ctx.currentTime + 0.15) {
         const s = this.step % 16, bar = Math.floor(this.step / 16) % 4, t = this.nextT;
-        const out = this.musicBus;
+        const out = this.musicIn;
+        if (kickP[s]) this.kicks.push(t);
         if (kickP[s]) { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.18); this.envAt(g, t, 0.9, 0.25); o.connect(g).connect(out); o.start(t); o.stop(t + 0.3); }
         if (snareP[s]) { const n = this.noiseSrc(), f = ctx.createBiquadFilter(), g = ctx.createGain(); f.type = 'bandpass'; f.frequency.value = 1800; f.Q.value = 0.6; this.envAt(g, t, 0.35, 0.16); n.connect(f).connect(g).connect(out); n.start(t, Math.random()); n.stop(t + 0.2); }
         if (hatP[s]) { const n = this.noiseSrc(), f = ctx.createBiquadFilter(), g = ctx.createGain(); f.type = 'highpass'; f.frequency.value = 7000; this.envAt(g, t, s % 4 === 2 ? 0.12 : 0.06, 0.04); n.connect(f).connect(g).connect(out); n.start(t, Math.random()); n.stop(t + 0.06); }
@@ -199,4 +218,50 @@ export class Audio {
   }
   envAt(g, t, peak, dec) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + dec); }
   music(on) { if (this.ctx) this.musicBus.gain.setTargetAtTime(on ? 0.32 : 0, this.t, 0.6); }
+  // The boombox in the corner of the roof during matches, and the night around it.
+  radio(on) {
+    this.radioOn = on;
+    if (!this.ctx) return;
+    this.radioGain.gain.setTargetAtTime(on ? 0.16 : 0, this.t, 0.8);
+    this.windGain.gain.setTargetAtTime(on ? 0.05 : 0.015, this.t, 1.5);
+  }
+  // 0..1 envelope on the radio's kick drum (the venue lights breathe with it).
+  beatLevel() {
+    if (!this.ctx || !this.radioOn) return 0;
+    const now = this.ctx.currentTime;
+    while (this.kicks.length > 1 && this.kicks[1] <= now) this.kicks.shift();
+    const k = this.kicks[0];
+    return k != null && k <= now ? Math.exp(-(now - k) * 7) : 0;
+  }
+
+  // ------------------------------------------------------------ night ambience
+  startAmbient() {
+    const ctx = this.ctx;
+    // wind across the roof: low noise with a slow swell
+    const w = this.noiseSrc(true), wf = ctx.createBiquadFilter(), wg = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+    wf.type = 'lowpass'; wf.frequency.value = 420; wf.Q.value = 0.7;
+    this.windGain = ctx.createGain(); this.windGain.gain.value = 0.015;
+    lfo.frequency.value = 0.09; lg.gain.value = 0.6; wg.gain.value = 1;
+    lfo.connect(lg).connect(wg.gain);
+    w.connect(wf).connect(wg).connect(this.windGain).connect(this.master);
+    w.start(); lfo.start();
+    // a siren somewhere far below, now and then
+    const siren = () => {
+      if (!this.ctx) return;
+      if (this.radioOn) {
+        const t0 = this.t, dur = 5 + Math.random() * 3;
+        const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(), pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+        o.type = 'triangle';
+        for (let t = 0; t < dur; t += 1.3) { o.frequency.setValueAtTime(620, t0 + t); o.frequency.linearRampToValueAtTime(930, t0 + t + 0.65); o.frequency.linearRampToValueAtTime(620, t0 + t + 1.3); }
+        f.type = 'lowpass'; f.frequency.value = 1300;
+        g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.018, t0 + dur * 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        let node = o.connect(f).connect(g);
+        if (pan) { pan.pan.value = Math.random() * 1.6 - 0.8; node = node.connect(pan); }
+        node.connect(this.master);
+        o.start(t0); o.stop(t0 + dur + 0.1);
+      }
+      setTimeout(siren, 35000 + Math.random() * 40000);
+    };
+    setTimeout(siren, 20000 + Math.random() * 20000);
+  }
 }
