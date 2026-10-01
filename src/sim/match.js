@@ -8,7 +8,7 @@ import { makePlayer, movePlayer, separatePlayers, clampToArea } from './players.
 import { TEAMS, buildLineup } from './squads.js';
 import { createMatchConfig } from './formats.js';
 import { formationToWorld } from './formations.js';
-import { PITCH, setPitch, inKeeperArea, isCage, lineCrossing, cornerSpot, goalKickSpot } from './pitch.js';
+import { PITCH, setPitch, inKeeperArea, isCage, lineCrossing, cornerSpot, goalKickSpot, clampToField } from './pitch.js';
 import { groundPassSpeed, solveLob, solveStrike, rollTime } from './kicks.js';
 import { clamp, damp, wrapAngle, angleDiff, mulberry32, smooth } from '../util/math.js';
 import { AIDirector } from './ai/director.js';
@@ -440,8 +440,7 @@ export class Match {
     if (p.human) { const ml = Math.hypot(p.move.x, p.move.z); if (ml > 0.1 && p.move.speed > 0.3) intent = { x: p.move.x / ml, z: p.move.z / ml }; }
     else if (p.touchDir) intent = p.touchDir;
     const mode = force || (p.cushion ? 'cushion' : intent ? 'directed' : 'neutral');
-    let near = 99;
-    for (const o of this.opponents(p)) near = Math.min(near, Math.hypot(o.x - p.x, o.z - p.z));
+    const near = this.nearestOpponent(p);
     const q = clamp(TOUCH.base + TOUCH.skill * p.attrs.control
       - Math.max(0, rel - TOUCH.freePace) * TOUCH.pacePenalty
       - (front > 0.45 ? 0 : front > -0.35 ? TOUCH.side : TOUCH.behind)
@@ -563,15 +562,17 @@ export class Match {
         return;
       }
       if (b.y >= 0.6 && b.y < 1.5 && hd < 0.5) {
-        if (rel < 15) {
-          // Chest / thigh control: kill it and drop it at the feet.
-          b.vx = p.vx * 0.7 + Math.cos(p.facing) * 0.6; b.vz = p.vz * 0.7 + Math.sin(p.facing) * 0.6; b.vy = -0.4;
-          b.lastTouch = p; b.passTo = null; p.noTouch = 0.05;
-          this.emit({ type: 'chest', pid: p.id, x: b.x, y: b.y, z: b.z });
-        } else this.bodyBlock(p, hd);
+        if (rel < 15) this.cushion(p);
+        else this.bodyBlock(p, hd);
         return;
       }
-      if (b.y >= 1.5 && b.y < 2.35 && hd < 0.48) { this.header(p); return; }
+      if (b.y >= 1.5 && b.y < 2.35 && hd < 0.48) {
+        // The man it was meant for, with nobody on him, cushions it down instead of
+        // nodding it away.
+        if (b.passTo === p && rel < 15 && !(p.human && p.wantShoot) && this.nearestOpponent(p) > 1.6) this.cushion(p, true);
+        else this.header(p);
+        return;
+      }
       if (bsp > 9 && hd < PLAYER.radius + R && b.y < 1.9) { this.bodyBlock(p, hd); return; }
     }
   }
@@ -586,19 +587,38 @@ export class Match {
     this.emit({ type: 'block', pid: p.id, x: b.x, y: b.y, z: b.z, speed: Math.abs(vn) });
   }
 
+  // Chest, thigh or a cushioned header: kill it and drop it at the feet. A pass that
+  // was meant for him is still his (it completes when he has it under control).
+  cushion(p, head = false) {
+    const b = this.ball;
+    b.vx = p.vx * 0.7 + Math.cos(p.facing) * 0.6; b.vz = p.vz * 0.7 + Math.sin(p.facing) * 0.6; b.vy = head ? -1 : -0.4;
+    b.lastTouch = p; p.noTouch = 0.05;
+    if (b.passTo !== p) b.passTo = null;
+    this.emit({ type: 'chest', pid: p.id, x: b.x, y: b.y, z: b.z, head });
+  }
+
+  nearestOpponent(p) {
+    let d = Infinity;
+    for (const o of this.opponents(p)) d = Math.min(d, Math.hypot(o.x - p.x, o.z - p.z));
+    return d;
+  }
+
   header(p) {
     const b = this.ball;
     const t = p.team, gx = this.oppGoalX(t);
     const toGoal = Math.hypot(gx - p.x, p.z);
     let vx, vy, vz;
     if (toGoal < 12 && (p.human ? p.wantShoot : true)) {
-      const tz = (this.rand() - 0.5) * 2.2;
+      const tz = (this.rand() - 0.5) * 2 * (PITCH.goalHalfW - 0.4);
       const d = Math.hypot(gx - b.x, tz - b.z), s = 13 + 3 * p.attrs.shot;
       vx = (gx - b.x) / d * s; vz = (tz - b.z) / d * s; vy = -1.5 + d * 0.25;
     } else {
-      // Nod it on toward the attacking direction, biased by facing.
+      // Nod it on toward the attacking direction, biased by facing — on an open pitch,
+      // into the field rather than back over the line he's standing by.
       const f = p.facing, dir = this.teams[t].dir;
-      const hx = Math.cos(f) * 0.5 + dir * 0.5, hz = Math.sin(f) * 0.5, hl = Math.hypot(hx, hz) || 1;
+      let hx = Math.cos(f) * 0.5 + dir * 0.5, hz = Math.sin(f) * 0.5;
+      if (!isCage()) { const aim = clampToField(b.x + hx * 9, b.z + hz * 9, 3); hx = aim.x - b.x; hz = aim.z - b.z; }
+      const hl = Math.hypot(hx, hz) || 1;
       vx = hx / hl * 9; vz = hz / hl * 9; vy = 3.5;
     }
     b.vx = vx; b.vy = vy; b.vz = vz; b.wx = b.wy = b.wz = 0;
@@ -1290,7 +1310,7 @@ export class Match {
     if (!mine && b.restartTaker === p) return false;
     if (!mine && !this.ballReachableSoon(p, type === 'volley' ? 1.6 : 1.0)) return false;
     if (b.inHands && mine) { type = type === 'shot' ? 'clear' : type === 'lob' ? 'clear' : 'throw'; }
-    if (type === 'clear' && !params.target) params.target = { x: this.oppGoalX(p.team) * 0.4, z: (this.rand() - 0.5) * 10 };
+    if (type === 'clear' && !params.target) params.target = { x: this.oppGoalX(p.team) * 0.4, z: (this.rand() - 0.5) * PITCH.width * 0.55 };
     if (type === 'throw' && params.receiver) params.target = { x: params.receiver.x, z: params.receiver.z };
     if (type === 'throw' && !params.target) return false;
     this.startAction(p, type, params);
@@ -1313,7 +1333,7 @@ export class Match {
       // No one there: play it into space in that direction.
       const hl = Math.hypot(dirX, dirZ);
       const ang = hl > 0.2 ? Math.atan2(dirZ, dirX) : p.facing;
-      const dist = kind === 'lob' ? 14 : 10;
+      const dist = this.ai.R.space[kind === 'lob' ? 1 : 0];
       const target = { x: clamp(p.x + Math.cos(ang) * dist, -PITCH.halfL + 1, PITCH.halfL - 1), z: clamp(p.z + Math.sin(ang) * dist, -PITCH.halfW + 1, PITCH.halfW - 1) };
       return this.requestKick(p, kind, { target, power, flair, ...extra });
     }

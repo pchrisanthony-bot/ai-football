@@ -16,6 +16,7 @@ import { maxSpeed } from '../players.js';
 import { PITCH, clampToField, inKeeperArea } from '../pitch.js';
 import { formationToWorld } from '../formations.js';
 import { evalShots, evalPasses, evalDribble, frontDefender, pressure, reachTime, threat } from './eval.js';
+import { aiRanges } from './ranges.js';
 
 const TEAM_TICK = 0.3;
 // How dangerous a player is in the air (heading at set pieces).
@@ -30,7 +31,10 @@ export class AIDirector {
     this.team = [this.blankTeam(), this.blankTeam()];
     this.ballPred = null;
     this.restartSpots = new Map();   // player id → spot for the set piece being taken
+    this.R = aiRanges(m.cfg.rules);  // distances scaled to this match's pitch
   }
+  // For telemetry: the scaled ranges in use.
+  ranges() { const R = this.R; return { s: R.s, g: R.g, shot: Math.round(R.shot), pass: Math.round(R.groundPass), long: Math.round(R.longPass), threat: Math.round(R.threat) }; }
   blankTeam() { return { phase: 'LOOSE', presser: null, presser2: null, marks: new Map(), chasers: new Set(), runners: new Set(), anchors: new Map(), forcePress: false, gkRush: false }; }
 
   get diff() { return this.m.opts.difficulty; }
@@ -78,8 +82,11 @@ export class AIDirector {
         const r = p.roleDef;
         u += T.phase === 'ATTACK' ? r.push : T.phase === 'DEFEND' ? -r.drop : 0;
         u += (bu - 0.5) * 0.5;
-        v += (bv - 0.5) * 0.35;
-        if (p.line === 'DEF') u = Math.min(u, T.phase === 'ATTACK' ? 0.5 : 0.38);
+        // In possession wide roles hold their width (stretch the pitch); out of it the
+        // whole shape shifts across with the ball.
+        v += (bv - 0.5) * 0.35 * (T.phase === 'ATTACK' ? 1.25 - 0.5 * r.width : 1);
+        // The last line holds; full-backs and wing-backs get forward more.
+        if (p.line === 'DEF') u = Math.min(u, T.phase === 'ATTACK' ? 0.5 + 0.25 * (1 - r.hold) : 0.38);
         u = clamp(u, 0.1, 0.88);
       }
       T.anchors.set(p.id, formationToWorld(u, clamp(v, 0.08, 0.92), dir));
@@ -118,18 +125,22 @@ export class AIDirector {
       const usedD = new Set(), usedA = new Set();
       for (const [, d, a] of pairs) {
         if (usedD.has(d) || usedA.has(a)) continue;
+        // Zonal formats: a man is picked up only when he's in your zone.
+        const anc = T.anchors.get(d.id);
+        if (Math.hypot(anc.x - a.x, anc.z - a.z) > this.R.markZone) continue;
         // The last line stays as the last line instead of chasing a man upfield.
         if (d.line === 'DEF' && (a.x - m.ownGoalX(t)) * dir > PITCH.halfL) continue;
         T.marks.set(d.id, a); usedD.add(d); usedA.add(a);
       }
     }
 
-    // Attacking: one forward-thinking player makes a run in behind.
+    // Attacking: one forward-thinking player makes a run in behind (by role: forwards,
+    // wingers and wing-backs — never the back line).
     T.runners.clear();
     if (T.phase === 'ATTACK') {
       let best = null, bs = -Infinity;
       for (const p of mates) {
-        if (p === o || p.line === 'GK' || p.line === 'DEF') continue;
+        if (p === o || p.line === 'GK' || p.roleDef.runs < 0.3) continue;
         const ahead = (p.x - o.x) * dir;
         if (ahead < -2) continue;
         const s = threat(m, t, p.x + dir * 4, p.z) - Math.max(0, 6 - ahead) * 0.01 + this.m.rand() * 0.05;
@@ -139,8 +150,9 @@ export class AIDirector {
     }
   }
 
-  // Predicted intercept point/time for a player on the free ball.
-  intercept(p) {
+  // Predicted intercept point/time for a player on the free ball: the first point of
+  // its path he can get to that's no higher than maxY (2.2 m: a header).
+  intercept(p, maxY = 2.2) {
     const b = this.m.ball;
     if (b.owner) return { t: reachTime(p, b.x, b.z, 0), x: b.x, z: b.z };
     const pred = this.ballPred;
@@ -148,7 +160,7 @@ export class AIDirector {
     for (let i = 0; i < pred.pts.length; i++) {
       const q = pred.pts[i];
       const tb = i / 30;
-      if (q.y > 2.2) continue;
+      if (q.y > maxY) continue;
       if (reachTime(p, q.x, q.z, 0.1) <= tb) return { t: tb, x: q.x, z: q.z };
     }
     const e = pred.pts[pred.pts.length - 1];
@@ -193,7 +205,7 @@ export class AIDirector {
     const carrier = b.owner;
     let best = anc, bs = -Infinity;
     for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2, r = i % 2 ? 2.5 : 4.5;
+      const a = (i / 12) * Math.PI * 2, r = this.R.support[i % 2 ? 0 : 1];
       const x = clamp(anc.x + Math.cos(a) * r, -PITCH.halfL + 1.2, PITCH.halfL - 1.2);
       const z = clamp(anc.z + Math.sin(a) * r, -PITCH.halfW + 1.2, PITCH.halfW - 1.2);
       let open = 99;
@@ -203,7 +215,7 @@ export class AIDirector {
       let lane = 1;
       if (carrier) {
         const dc = Math.hypot(x - carrier.x, z - carrier.z);
-        if (dc < 3.5 || dc > 16) lane = 0.3;
+        if (dc < this.R.lane[0] || dc > this.R.lane[1]) lane = 0.3;
         for (const o of m.opponents(p)) {
           const dx = x - carrier.x, dz = z - carrier.z, l2 = dx * dx + dz * dz;
           const tt = clamp(((o.x - carrier.x) * dx + (o.z - carrier.z) * dz) / l2, 0, 1);
@@ -219,7 +231,7 @@ export class AIDirector {
 
   runSpot(p) {
     const m = this.m, dir = m.teams[p.team].dir;
-    const x = clamp(p.x + dir * 7, -PITCH.halfL + 3, PITCH.halfL - 3);
+    const x = clamp(p.x + dir * this.R.run, -PITCH.halfL + 3, PITCH.halfL - 3);
     const z = clamp(p.z * 0.6, -PITCH.halfW + 2, PITCH.halfW - 2);
     return { x, z };
   }
@@ -290,6 +302,9 @@ export class AIDirector {
       case 'pass': case 'through':
         if (m.requestKick(p, best.kind, { receiver: best.r })) ai.pop = { text: best.label, t: 1 };
         break;
+      case 'lob':
+        if (m.requestKick(p, 'lob', { receiver: best.r, target: best.lead })) ai.pop = { text: best.label, t: 1 };
+        break;
       case 'wallpass':
         if (m.requestKick(p, 'pass', { receiver: best.r, angle: best.angle, speed: best.speed })) ai.pop = { text: 'WALL PASS', t: 1.2 };
         break;
@@ -335,7 +350,8 @@ export class AIDirector {
         break;
       }
       case 'RECEIVE': {
-        const ic = this.intercept(p);
+        // A lofted ball with nobody near him: wait for it to drop to chest height.
+        const ic = this.intercept(p, m.nearestOpponent(p) > 3 ? 1.3 : 2.2);
         this.goTo(p, ic.x, ic.z, maxSpeed(p, true), 0.2);
         p.sprinting = true;
         this.planTouch(p, ic);
@@ -456,7 +472,7 @@ export class AIDirector {
           else m.requestKick(p, 'pass', { receiver: passes[0].r });
           ai.pop = { text: 'DISTRIBUTE', t: 1 };
         } else if (p.possessT > 1.8) {
-          m.requestKick(p, 'clear', { target: { x: dir * 6, z: (this.m.rand() - 0.5) * 12 } });
+          m.requestKick(p, 'clear', { target: { x: dir * this.R.clear.x, z: (this.m.rand() - 0.5) * this.R.clear.z } });
           ai.pop = { text: 'CLEAR', t: 1 };
         }
       }
@@ -473,7 +489,7 @@ export class AIDirector {
         if (mine < theirs - 0.05) { ai.state = 'CLAIM'; ai.label = ai.state; return; }
       }
     }
-    if (ai.state !== 'DIVE') ai.state = b.owner && b.owner.team !== p.team && Math.hypot(b.x - gx, b.z) < 14 ? 'SET' : 'POSITION';
+    if (ai.state !== 'DIVE') ai.state = b.owner && b.owner.team !== p.team && Math.hypot(b.x - gx, b.z) < this.R.keeperSet ? 'SET' : 'POSITION';
     ai.label = ai.state;
   }
 
@@ -502,7 +518,7 @@ export class AIDirector {
     const inFlight = !b.owner && Math.hypot(b.vx, b.vz) > 12;
     const bx = b.x - gx, bz = inFlight ? b.z * 0.45 + (ai.setZ ?? b.z) * 0.55 : b.z, bl = Math.hypot(bx, bz) || 1;
     if (!inFlight) ai.setZ = b.z;
-    const out = clamp(0.5 + bl * 0.09, 0.6, ai.state === 'SET' ? 1.6 : 2.4);
+    const out = clamp(0.5 + bl * 0.09, 0.6, this.R.keeperOut[ai.state === 'SET' ? 0 : 1]);
     let tx = gx + bx / bl * out, tz = bz / bl * out;
     tz = clamp(tz, -PITCH.goalHalfW + 0.25, PITCH.goalHalfW - 0.25);
     // 1v1: rush to narrow the angle.
@@ -511,7 +527,7 @@ export class AIDirector {
       // Human held "rush keeper": come off the line at the carrier.
       this.goTo(p, o.x, o.z, maxSpeed(p, true), 0.2); ai.label = 'RUSH'; return;
     }
-    if (o && o.team !== p.team && Math.hypot(o.x - gx, o.z) < PITCH.boxR && (o.x - gx) * dir < 5) {
+    if (o && o.team !== p.team && Math.hypot(o.x - gx, o.z) < PITCH.boxR && (o.x - gx) * dir < this.R.rush) {
       tx = gx + (o.x - gx) * 0.55; tz = o.z * 0.55; ai.label = 'RUSH';
     }
     const sp = ai.state === 'SET' ? 3.5 : 5;

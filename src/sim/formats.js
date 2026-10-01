@@ -11,22 +11,22 @@ export const FORMATS = {
   '5v5': {
     label: '5v5 · STREET CAGE', teamSize: 5, pitch: 'cage5',
     formations: ['1-2-1', '2-1-1', '1-1-2'],
-    rules: { outOfPlay: false },          // walled cage: the ball never leaves play
+    rules: { outOfPlay: false, marking: 'man' },   // walled cage: the ball never leaves play; futsal man-marking
   },
   '7v7': {
     label: '7v7', teamSize: 7, pitch: 'open7',
     formations: ['2-3-1', '3-2-1', '2-2-2'],
-    rules: { outOfPlay: true },
+    rules: { outOfPlay: true, marking: 'zonal' },
   },
   '9v9': {
     label: '9v9', teamSize: 9, pitch: 'open9',
     formations: ['3-3-2', '3-2-3', '4-3-1'],
-    rules: { outOfPlay: true },
+    rules: { outOfPlay: true, marking: 'zonal' },
   },
   '11v11': {
     label: '11v11', teamSize: 11, pitch: 'full11',
     formations: ['4-3-3', '4-2-3-1', '4-4-2', '3-5-2'],
-    rules: { outOfPlay: true },
+    rules: { outOfPlay: true, marking: 'zonal' },
   },
 };
 export const FORMAT_IDS = Object.keys(FORMATS);
