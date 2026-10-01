@@ -22,6 +22,25 @@ const isolate = (H, o = {}) => H.eval((o) => {
 const tel = H => H.eval(() => { const t = __telemetry(); return { speed: t.player.speed, mode: t.player.mode, gap: t.gap, ball: t.ball.speed, owner: t.ball.owner, ft: t.firstTouch }; });
 
 const SCENARIOS = {
+  // P2: notices sit in the top band, not over play — a real parry, then KICK OFF + GAMEBREAKER
+  async notices(H) {
+    await H.step(30);
+    await H.eval(() => {
+      const m = __G.match, gk = m.keeper(1), p = m.human;
+      m.loseBall();
+      const dir = -m.teams[gk.team].dir;   // toward the keeper's goal
+      Object.assign(m.ball, { x: gk.x - dir * 4, y: 0.6, z: gk.z, vx: dir * 22, vy: 0.4, vz: 0, wx: 0, wy: 0, wz: 0, owner: null });
+      m.ball.lastKick = { pid: p.id, team: p.team, kind: 'shot', t: m.time }; m.ball.lastTouch = p;
+    });
+    await H.step(14);
+    const afterSave = await H.eval(() => [...document.querySelectorAll('.notice b')].map(n => n.textContent));
+    await H.shot('notices-parry');
+    await H.eval(() => { __G.match.teams[0].gbReady = true; __G.match.activateGB(0); });
+    await H.step(6);
+    await H.shot('notices-gamebreaker');
+    const stack = await H.eval(() => [...document.querySelectorAll('.notice')].map(n => ({ text: n.textContent, top: Math.round(n.getBoundingClientRect().top), bottom: Math.round(n.getBoundingClientRect().bottom), vh: innerHeight })));
+    return { afterSave, stack };
+  },
   // P1: release the stick while sprinting with the ball
   async 'stop-with-ball'(H) {
     await isolate(H, { ball: true, x: -12 });
@@ -57,7 +76,7 @@ const SCENARIOS = {
   },
 };
 
-const H = await harness();
+const H = await harness({ w: +arg('w', 1280), h: +arg('h', 720), touch: arg('touch', '0') === '1' });
 await H.start(format != null ? { FORMAT: +format } : {});
 await H.step(90);
 const names = want === 'all' ? Object.keys(SCENARIOS) : [want];

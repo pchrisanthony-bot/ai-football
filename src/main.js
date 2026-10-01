@@ -378,7 +378,7 @@ function toDrill() {
   G.state = 'match';
   audio.music(false);
   audio.radio(true);
-  hud.big('TRICK-SHOT DRILL', 'Lane blocked — hold K and aim at the FAR wall: it comes back behind the keeper', 3200);
+  hud.notify('TRICK-SHOT DRILL', 'info', { sub: TOUCH ? 'Lane blocked — hold SHOOT and aim at the FAR wall: it comes back behind the keeper' : 'Lane blocked — hold K and aim at the FAR wall: it comes back behind the keeper', dur: 4 });
 }
 
 function setupDrill() {
@@ -456,7 +456,7 @@ function tick(dt) {
       if (G.stateT > 2.4 || (G.stateT > 0.3 && input.anyPressed())) {
         G.state = 'match';
         rig.focus.set(m.ball.x, 0, m.ball.z); rig.fVel.set(0, 0, 0);
-        hud.big('KICK OFF', `${m.teams[0].def.name} vs ${m.teams[1].def.name}`, 1100);
+        hud.notify('KICK OFF', 'restart', { sub: `${m.teams[0].def.name} vs ${m.teams[1].def.name}` });
       }
       break;
     }

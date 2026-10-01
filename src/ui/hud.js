@@ -5,6 +5,19 @@ import { COURT, STYLE } from '../config.js';
 import { crest } from './crest.js';
 
 const h = (tag, cls, html = '') => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
+
+// Where each kind of notice goes. Anything that can happen while the ball is live sits
+// in the top band under the score bug (never over the middle of the pitch); only
+// dead-ball moments (a goal) may take the centre.
+export const NOTICES = {
+  save:    { at: 'top', size: 'm', dur: 1.3 },     // PARRIED! / SAVED!
+  frame:   { at: 'top', size: 'm', dur: 1.3 },     // OFF THE POST / BAR
+  skill:   { at: 'top', size: 'm', dur: 1.2 },     // PANNA!
+  alert:   { at: 'top', size: 'm', dur: 1.8 },     // GAMEBREAKER READY
+  restart: { at: 'top', size: 'l', dur: 1.6 },     // KICK OFF / CORNER / THROW-IN / GOAL KICK
+  power:   { at: 'top', size: 'l', dur: 2.2 },     // GAMEBREAKER (slow motion, play is live)
+  info:    { at: 'top', size: 's', dur: 3.2 },     // instructions (drill)
+};
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 export class HUD {
@@ -40,7 +53,7 @@ export class HUD {
       this.root.appendChild(el);
       return { el, fill: el.querySelector('.meter-fill'), label: el.querySelector('.meter-label') };
     });
-    this.center = h('div', 'callout');
+    this.notices = h('div', 'notices');
     this.feed = h('div', 'feed');
     this.banner = h('div', 'banner');
     this.replayTag = h('div', 'replay-tag hidden', '<span class="r-badge">R</span><small>tap / any key to skip</small>');
@@ -55,7 +68,7 @@ export class HUD {
     this.tele = h('pre', 'tele hidden');
     this.teleT = 0;
     this.hint = h('div', 'hint', '<kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>J</kbd> pass <kbd>K</kbd> shoot (hold) <kbd>L</kbd> through <kbd>I</kbd> lob <kbd>Space</kbd> close control <kbd>Q E F R U</kbd> skills <kbd>Tab</kbd> AI view <kbd>Esc</kbd> pause');
-    this.root.append(this.letterbox, this.center, this.feed, this.banner, this.replayTag, this.l3, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.tele, this.hint);
+    this.root.append(this.letterbox, this.notices, this.feed, this.banner, this.replayTag, this.l3, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.tele, this.hint);
     this.labels.clear();
     this.setDebug(this.debug);
     this.lastScore = [0, 0];
@@ -84,11 +97,17 @@ export class HUD {
     requestAnimationFrame(() => { this.flashEl.style.transition = 'opacity .35s'; this.flashEl.style.opacity = 0; });
   }
 
-  callout(text, color = '#FFD400', dur = 1.3) {
-    const e = h('div', 'callout-text', text);
-    e.style.color = color;
-    this.center.appendChild(e);
-    setTimeout(() => e.remove(), dur * 1000);
+  // Show a notice. kind: a key of NOTICES; opts: { color, sub, dur }.
+  notify(text, kind = 'info', { color = '#FFD400', sub = '', dur } = {}) {
+    const spec = NOTICES[kind] || NOTICES.info;
+    const e = h('div', `notice n-${spec.size} n-${kind}`, `<b>${text}</b>${sub ? `<small>${sub}</small>` : ''}`);
+    e.style.setProperty('--c', color);
+    this.notices.prepend(e);
+    while (this.notices.children.length > 3) this.notices.lastChild.remove();
+    const ms = (dur ?? spec.dur) * 1000;
+    setTimeout(() => e.classList.add('out'), ms);
+    setTimeout(() => e.remove(), ms + 350);
+    return e;
   }
 
   style(label, pts, color) {
@@ -98,14 +117,12 @@ export class HUD {
     while (this.feed.children.length > 4) this.feed.lastChild.remove();
     setTimeout(() => e.classList.add('out'), 1800);
     setTimeout(() => e.remove(), 2300);
-    if (label === 'PANNA!') this.callout('PANNA!', '#FF3B6B', 1.4);
+    if (label === 'PANNA!') this.notify('PANNA!', 'skill', { color: '#FF3B6B' });
   }
 
   gamebreaker(team) {
     const T = this.m.teams[team];
-    this.banner.innerHTML = `<div class="gb" style="--c:${T.def.kit.shirt}">GAMEBREAKER<small>${T.def.name}</small></div>`;
-    this.banner.classList.add('show');
-    setTimeout(() => this.banner.classList.remove('show'), 2200);
+    this.notify('GAMEBREAKER', 'power', { color: T.def.kit.trim, sub: T.def.name });
   }
 
   goal(info, match) {
@@ -122,13 +139,6 @@ export class HUD {
     setTimeout(() => this.banner.classList.remove('show'), 2600);
   }
 
-  big(text, sub = '', ms = 900) {
-    this.banner.innerHTML = `<div class="big">${text}${sub ? `<small>${sub}</small>` : ''}</div>`;
-    this.banner.classList.add('show');
-    clearTimeout(this._bigT);
-    if (ms) this._bigT = setTimeout(() => this.banner.classList.remove('show'), ms);
-  }
-  clearBig() { this.banner.classList.remove('show'); }
 
   setReplay(on) {
     this.replayTag.classList.toggle('hidden', !on);
