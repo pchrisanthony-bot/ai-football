@@ -21,6 +21,8 @@ import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel, l
 import { TEAMS } from './sim/players.js';
 import { DRILL_VARIANTS, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
+import { prof } from './util/profiler.js';
+import { makeTelemetry, telemetryText } from './game/telemetry.js';
 
 const view = document.getElementById('view');
 const ui = document.getElementById('ui');
@@ -422,6 +424,8 @@ function frame(now) {
 // even when the tab is hidden: window.__tick(1/60, n).
 function tick(dt) {
   G.t += dt; G.stateT += dt;
+  prof.frame();
+  let t0 = prof.now();
   input.update(dt);
   if (input.anyPressed()) audio.init();
 
@@ -526,13 +530,20 @@ function tick(dt) {
   }
   rig.zoomBias = (innerHeight < 520 ? -3 : 0) - (G.slow > 0 && G.state === 'match' ? 4 : 0);
 
+  prof.add('update-total', t0);   // includes sim + view
+  t0 = prof.now();
   venue.setBeat(audio.beatLevel());
   venue.update(G.t, R.camera);
   rain.update(dt, rig.focus);
   fx.update(dt);
   rig.apply(dt);
+  prof.add('scene', t0);
+  t0 = prof.now();
   if (G.match && !['title', 'setup', 'controls', 'boards', 'tag', 'lineups'].includes(G.state)) hud.update(dt, G.human);
+  prof.add('hud', t0);
+  t0 = prof.now();
   R.composer.render();
+  prof.add('render-submit', t0);
 }
 
 function spread(m) {
@@ -546,14 +557,17 @@ function stepMatch(dt, quiet) {
   const m = G.match;
   G.acc += dt;
   let n = 0;
+  let t0 = prof.now();
   while (G.acc >= SIM_DT && n < 12) { m.step(SIM_DT); G.acc -= SIM_DT; n++; }
   if (n === 12) G.acc = 0;
+  prof.add('sim', t0);
   const events = m.drainEvents();
   if (quiet) {
     for (const e of events) if (e.type === 'goalDone') m.resumeAfterGoal();
     G.mview.update(dt, null);
     return events;
   }
+  t0 = prof.now();
   G.mview.handleEvents(events, hud);
   for (const e of events) {
     if (e.type === 'gamebreaker') G.slow = 0.55;
@@ -565,6 +579,7 @@ function stepMatch(dt, quiet) {
     }
   }
   G.mview.update(dt, G.human);
+  prof.add('view', t0);
   return events;
 }
 
@@ -583,6 +598,10 @@ R.renderer.compile(R.scene, R.camera);
 requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
 setTimeout(() => { loading.style.opacity = 0; setTimeout(() => loading.remove(), 700); }, 400);
 window.__G = G;
+window.__prof = prof;
+window.__telemetry = makeTelemetry(() => G.match, rig);
+hud.setTelemetry(window.__telemetry, telemetryText);
+if (/[?&]profile\b/.test(location.search)) prof.enable();
 window.__R = R; window.__perf = perf;
 window.__tick = (dt = 1 / 60, n = 1) => { G.manual = true; for (let i = 0; i < n; i++) tick(dt); };
 window.__auto = () => { G.manual = false; };

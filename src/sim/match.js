@@ -8,6 +8,7 @@ import { makePlayer, movePlayer, separatePlayers, maxSpeed, TEAMS } from './play
 import { groundPassSpeed, solveLob, solveStrike, rollTime } from './kicks.js';
 import { clamp, damp, wrapAngle, angleDiff, mulberry32, smooth } from '../util/math.js';
 import { AIDirector } from './ai/director.js';
+import { prof } from '../util/profiler.js';
 
 const R = BALL.r;
 const TAU = Math.PI * 2;
@@ -153,8 +154,11 @@ export class Match {
     const o = this.ball.owner;
     if (o) { o.possessT += dt; this.teams[o.team].stats.possession += dt; }
 
+    let t0 = prof.now();
     this.ai.update(dt);
+    prof.add('ai', t0);
 
+    t0 = prof.now();
     const own = this.ball.owner;
     const knocking = own && own.dribble.mode === 'knock';
     for (const p of this.players) {
@@ -172,7 +176,10 @@ export class Match {
       p.steer = null;
     }
     separatePlayers(this.players);
+    prof.add('players', t0);
+    t0 = prof.now();
     this.updateBall(dt);
+    prof.add('ball', t0);
   }
 
   fullTime() {

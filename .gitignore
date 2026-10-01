@@ -3,3 +3,4 @@ dist/
 reference/
 .env*.local
 .vercel
+tools/play/out/

@@ -52,8 +52,10 @@ export class HUD {
     this.radar = h('canvas', 'radar'); this.radar.width = 256; this.radar.height = 144;
     this.dbg = h('div', 'dbg');
     this.dbgLegend = h('div', 'dbg-legend hidden', `<b>AI DEBUG</b> — each tag is one autonomous agent: <i>STATE</i> · chosen action · top utility scores. <kbd>Tab</kbd> to hide`);
+    this.tele = h('pre', 'tele hidden');
+    this.teleT = 0;
     this.hint = h('div', 'hint', '<kbd>WASD</kbd> move <kbd>Shift</kbd> sprint <kbd>J</kbd> pass <kbd>K</kbd> shoot (hold) <kbd>L</kbd> through <kbd>I</kbd> lob <kbd>Space</kbd> close control <kbd>Q E F R U</kbd> skills <kbd>Tab</kbd> AI view <kbd>Esc</kbd> pause');
-    this.root.append(this.letterbox, this.center, this.feed, this.banner, this.replayTag, this.l3, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.hint);
+    this.root.append(this.letterbox, this.center, this.feed, this.banner, this.replayTag, this.l3, this.tag, this.flashEl, this.radar, this.dbg, this.dbgLegend, this.tele, this.hint);
     this.labels.clear();
     this.setDebug(this.debug);
     this.lastScore = [0, 0];
@@ -66,7 +68,10 @@ export class HUD {
     this.debug = on;
     this.dbg.classList.toggle('hidden', !on);
     this.dbgLegend?.classList.toggle('hidden', !on);
+    this.tele?.classList.toggle('hidden', !on || !this.telemetry);
   }
+  // Debug telemetry readout (shown with the AI debug overlay).
+  setTelemetry(fn, toText) { this.telemetry = fn; this.teleText = toText; this.tele?.classList.toggle('hidden', !this.debug || !fn); }
 
   project(x, y, z) {
     this.v.set(x, y, z).project(this.cam);
@@ -180,7 +185,10 @@ export class HUD {
     } else this.tag.classList.add('hidden');
 
     this.drawRadar();
-    if (this.debug) this.drawDebug();
+    if (this.debug) {
+      this.drawDebug();
+      if (this.telemetry && (this.teleT -= dt) <= 0) { this.teleT = 0.25; this.tele.textContent = this.teleText(this.telemetry()); }
+    }
   }
 
   pop(el) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
