@@ -6,19 +6,7 @@
 export const SIM_HZ = 120;
 export const SIM_DT = 1 / SIM_HZ;
 
-export const COURT = {
-  halfL: 16,          // 32 m long
-  halfW: 9,           // 18 m wide
-  wallH: 4.5,         // cage fence height (visual)
-  roofH: 6.0,         // roof net — the ball never leaves play
-  boardH: 1.0,        // solid kickboards at the base of the fence
-  goalHalfW: 1.5,     // 3 m wide futsal goal
-  goalH: 2.0,
-  goalD: 1.2,
-  postR: 0.05,
-  boxR: 5.0,          // keeper area (quarter-circle arcs, futsal style)
-  centreR: 3.0,
-};
+// Pitch dimensions (cage and open pitches) live in ONE place: src/sim/pitch.js.
 
 export const BALL = {
   r: 0.11,
@@ -140,7 +128,12 @@ export const RULES = {
   firstTo: 5,
 };
 
-export const TEAM_SIZE = 5;
+// Player switching (seconds: time to win the ball, so it scales with any pitch).
+export const SWITCH = {
+  goalSide: 0.2,      // credit for being goal-side of the ball
+  onChange: 0.12,     // margin to switch right after the ball changes hands
+  margin: 0.8,        // …and at any other time
+};
 
 export const STYLE = {
   meterMax: 1000,

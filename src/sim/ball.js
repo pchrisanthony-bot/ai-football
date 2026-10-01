@@ -6,10 +6,10 @@
 // coefficient of restitution is) and light friction on the tangential component.
 // A 30 m/s strike at 50° leaves the mesh at ~26 m/s — that's why cage banks bite.
 // =====================================================================
-import { BALL, COURT } from '../config.js';
+import { BALL } from '../config.js';
+import { PITCH } from './pitch.js';
 
 const R = BALL.r;
-const { halfL, halfW, roofH, goalHalfW, goalH, goalD, postR, boardH } = COURT;
 
 export function makeBall() {
   return {
@@ -57,7 +57,7 @@ function collideSegment(b, ax, ay, az, bx, by, bz, ev, kind) {
   t = t < 0 ? 0 : t > 1 ? 1 : t;
   const px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
   let nx = b.x - px, ny = b.y - py, nz = b.z - pz;
-  const d = Math.hypot(nx, ny, nz), rr = R + postR;
+  const d = Math.hypot(nx, ny, nz), rr = R + PITCH.postR;
   if (d >= rr || d < 1e-9) return;
   nx /= d; ny /= d; nz /= d;
   b.x = px + nx * rr; b.y = py + ny * rr; b.z = pz + nz * rr;
@@ -90,6 +90,7 @@ function contactFriction(b, jmax) {
 }
 
 function integrate(b, h, ev) {
+  const { halfL, halfW, roofH, goalHalfW, goalH, goalD, boardH } = PITCH;
   const grounded = b.y <= R + 1e-4 && Math.abs(b.vy) < BALL.bounceMinVy;
 
   if (grounded) {

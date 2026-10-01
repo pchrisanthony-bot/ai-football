@@ -1,6 +1,7 @@
 // Headless physics checks for the protected feature (cage rebounds) and the rest of the ball model.
 import { makeBall, stepBall, predictPath, copyBall } from '../src/sim/ball.js';
-import { BALL, COURT } from '../src/config.js';
+import { BALL } from '../src/config.js';
+import { PITCH } from '../src/sim/pitch.js';
 import { bankAim } from '../src/sim/kicks.js';
 
 const R = BALL.r;
@@ -33,7 +34,7 @@ for (const [label, sx, sz, tz, wallSide] of [
   ['bank off near wall', 6, 4, -0.5, 1],
   ['bank from deep', -2, 5, 0.9, 1],
 ]) {
-  const gx = COURT.halfL;
+  const gx = PITCH.halfL;
   const ba = bankAim(sx, sz, gx, tz, wallSide);
   const speed = 24;
   const b = makeBall(); b.x = sx; b.z = sz; b.y = R;
@@ -71,14 +72,14 @@ for (const [label, sx, sz, tz, wallSide] of [
 
 // 4. No tunnelling: 35 m/s straight at a post.
 {
-  const b = makeBall(); b.x = 10; b.z = COURT.goalHalfW; b.y = 1; b.vx = 35; b.vy = 0;
+  const b = makeBall(); b.x = 10; b.z = PITCH.goalHalfW; b.y = 1; b.vx = 35; b.vy = 0;
   const ev = run(b, 0.3);
   check('35 m/s shot rings off the post', ev.some(e => e.type === 'post') && b.vx < 0 && !b.goal, `vx ${b.vx.toFixed(2)} goal ${b.goal}`);
 }
 
 // 5. Crossbar
 {
-  const b = makeBall(); b.x = 14; b.z = 0; b.y = COURT.goalH - 0.04; b.vx = 25; b.vy = 0.45;
+  const b = makeBall(); b.x = 14; b.z = 0; b.y = PITCH.goalH - 0.04; b.vx = 25; b.vy = 0.45;
   const ev = run(b, 0.4);
   check('crossbar hit', ev.some(e => e.type === 'post' && e.kind === 'bar'), '');
 }
@@ -87,7 +88,7 @@ for (const [label, sx, sz, tz, wallSide] of [
 {
   const b = makeBall(); b.x = 8; b.z = 0.4; b.y = 0.5; b.vx = 25; b.vy = 1.5;
   const ev = run(b, 2.0);
-  check('goal detected + net absorbs', b.goal === 1 && ev.some(e => e.type === 'goal') && Math.hypot(b.vx, b.vz) < 2 && b.x > COURT.halfL && b.x < COURT.halfL + COURT.goalD,
+  check('goal detected + net absorbs', b.goal === 1 && ev.some(e => e.type === 'goal') && Math.hypot(b.vx, b.vz) < 2 && b.x > PITCH.halfL && b.x < PITCH.halfL + PITCH.goalD,
     `goal ${b.goal} ball x ${b.x.toFixed(2)} speed ${Math.hypot(b.vx, b.vz).toFixed(2)}`);
 }
 

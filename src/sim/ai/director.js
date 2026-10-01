@@ -9,10 +9,12 @@
 //     wall pass / dribble / skill / shield.
 // Difficulty changes reaction time, decision noise and press intensity only.
 // =====================================================================
-import { COURT, BALL, PLAYER, AI } from '../../config.js';
-import { clamp, damp, angleDiff, wrapAngle } from '../../util/math.js';
+import { AI } from '../../config.js';
+import { clamp } from '../../util/math.js';
 import { predictPath } from '../ball.js';
 import { maxSpeed } from '../players.js';
+import { PITCH } from '../pitch.js';
+import { formationToWorld } from '../formations.js';
 import { evalShots, evalPasses, evalDribble, frontDefender, pressure, reachTime, threat } from './eval.js';
 
 const TEAM_TICK = 0.3;
@@ -59,28 +61,30 @@ export class AIDirector {
     const mates = m.teamPlayers(t);
     const dir = m.teams[t].dir;
     // An AI side fires its GAMEBREAKER when it has the ball in the attacking half.
-    if (m.teams[t].gbReady && m.opts.humanTeam !== t && o && o.team === t && o.role !== 'GK' && o.x * dir > 1) m.activateGB(t);
+    if (m.teams[t].gbReady && m.opts.humanTeam !== t && o && o.team === t && o.line !== 'GK' && o.x * dir > 1) m.activateGB(t);
 
-    // Shape anchors: base futsal diamond, shifted by phase and by the ball.
-    const bu = (b.x * dir + COURT.halfL) / (2 * COURT.halfL);
-    const bv = (b.z + COURT.halfW) / (2 * COURT.halfW);
+    // Shape anchors: each player's formation spot (team-relative), stepped up or
+    // dropped by his role for the phase, and the whole shape shifted toward the ball.
+    const bu = (b.x * dir + PITCH.halfL) / PITCH.length;
+    const bv = 0.5 + dir * b.z / PITCH.width;
     T.anchors.clear();
     for (const p of mates) {
-      let u = p.baseU, v = p.baseV;
-      if (p.role !== 'GK') {
-        u += T.phase === 'ATTACK' ? 0.1 : T.phase === 'DEFEND' ? -0.07 : 0;
+      let u = p.form.x, v = p.form.y;
+      if (p.line !== 'GK') {
+        const r = p.roleDef;
+        u += T.phase === 'ATTACK' ? r.push : T.phase === 'DEFEND' ? -r.drop : 0;
         u += (bu - 0.5) * 0.5;
         v += (bv - 0.5) * 0.35;
-        if (p.role === 'DEF') u = Math.min(u, T.phase === 'ATTACK' ? 0.5 : 0.38);
+        if (p.line === 'DEF') u = Math.min(u, T.phase === 'ATTACK' ? 0.5 : 0.38);
         u = clamp(u, 0.1, 0.88);
       }
-      T.anchors.set(p.id, { x: -dir * COURT.halfL + dir * u * 2 * COURT.halfL, z: (clamp(v, 0.08, 0.92) - 0.5) * 2 * COURT.halfW });
+      T.anchors.set(p.id, formationToWorld(u, clamp(v, 0.08, 0.92), dir));
     }
 
     // Loose ball: the fastest to the ball chases (by predicted intercept time).
     T.chasers.clear();
     if (T.phase === 'LOOSE') {
-      const ranked = mates.filter(p => p.role !== 'GK').map(p => [this.intercept(p).t, p]).sort((a, c) => a[0] - c[0]);
+      const ranked = mates.filter(p => p.line !== 'GK').map(p => [this.intercept(p).t, p]).sort((a, c) => a[0] - c[0]);
       if (ranked[0]) T.chasers.add(ranked[0][1]);
       if (ranked[1] && ranked[1][0] < ranked[0][0] + 0.5) T.chasers.add(ranked[1][1]);
     }
@@ -88,7 +92,7 @@ export class AIDirector {
     // Defending: one presser, the rest mark greedily, the leftover covers.
     T.presser = null; T.marks.clear();
     if (T.phase === 'DEFEND') {
-      const outfield = mates.filter(p => p.role !== 'GK');
+      const outfield = mates.filter(p => p.line !== 'GK');
       let best = null, bt = Infinity;
       for (const p of outfield) { const tt = reachTime(p, o.x, o.z, 0); if (tt < bt) { bt = tt; best = p; } }
       T.presser = best;
@@ -99,7 +103,7 @@ export class AIDirector {
         for (const p of outfield) { if (p.human || p === best) continue; const tt = reachTime(p, o.x, o.z, 0); if (tt < bt2) { bt2 = tt; b2 = p; } }
         if (best && best.human) T.presser2 = b2; else if (b2 && !best) T.presser = b2;
       }
-      const attackers = m.teamPlayers(1 - t).filter(a => a !== o && a.role !== 'GK');
+      const attackers = m.teamPlayers(1 - t).filter(a => a !== o && a.line !== 'GK');
       const free = outfield.filter(p => p !== best && p !== T.presser2);
       const pairs = [];
       for (const d of free) for (const a of attackers) {
@@ -110,8 +114,8 @@ export class AIDirector {
       const usedD = new Set(), usedA = new Set();
       for (const [, d, a] of pairs) {
         if (usedD.has(d) || usedA.has(a)) continue;
-        // The fixo stays as the last man instead of chasing a man upfield.
-        if (d.role === 'DEF' && (a.x - m.ownGoalX(t)) * dir > 16) continue;
+        // The last line stays as the last line instead of chasing a man upfield.
+        if (d.line === 'DEF' && (a.x - m.ownGoalX(t)) * dir > PITCH.halfL) continue;
         T.marks.set(d.id, a); usedD.add(d); usedA.add(a);
       }
     }
@@ -121,7 +125,7 @@ export class AIDirector {
     if (T.phase === 'ATTACK') {
       let best = null, bs = -Infinity;
       for (const p of mates) {
-        if (p === o || p.role === 'GK' || p.role === 'DEF') continue;
+        if (p === o || p.line === 'GK' || p.line === 'DEF') continue;
         const ahead = (p.x - o.x) * dir;
         if (ahead < -2) continue;
         const s = threat(m, t, p.x + dir * 4, p.z) - Math.max(0, 6 - ahead) * 0.01 + this.m.rand() * 0.05;
@@ -158,7 +162,7 @@ export class AIDirector {
   think(p) {
     const m = this.m, b = m.ball, T = this.team[p.team], ai = p.ai;
     if (m.phase !== 'play') return;
-    if (p.role === 'GK') return this.keeperThink(p);
+    if (p.line === 'GK') return this.keeperThink(p);
 
     if (b.owner === p) { this.setState(p, 'ATTACK', true); return this.attackThink(p); }
     if (b.passTo === p) { this.setState(p, 'RECEIVE', true); return; }
@@ -185,8 +189,8 @@ export class AIDirector {
     let best = anc, bs = -Infinity;
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2, r = i % 2 ? 2.5 : 4.5;
-      const x = clamp(anc.x + Math.cos(a) * r, -COURT.halfL + 1.2, COURT.halfL - 1.2);
-      const z = clamp(anc.z + Math.sin(a) * r, -COURT.halfW + 1.2, COURT.halfW - 1.2);
+      const x = clamp(anc.x + Math.cos(a) * r, -PITCH.halfL + 1.2, PITCH.halfL - 1.2);
+      const z = clamp(anc.z + Math.sin(a) * r, -PITCH.halfW + 1.2, PITCH.halfW - 1.2);
       let open = 99;
       for (const o of m.opponents(p)) open = Math.min(open, Math.hypot(o.x - x, o.z - z));
       let spacing = 99;
@@ -210,8 +214,8 @@ export class AIDirector {
 
   runSpot(p) {
     const m = this.m, dir = m.teams[p.team].dir;
-    const x = clamp(p.x + dir * 7, -COURT.halfL + 3, COURT.halfL - 3);
-    const z = clamp(p.z * 0.6, -COURT.halfW + 2, COURT.halfW - 2);
+    const x = clamp(p.x + dir * 7, -PITCH.halfL + 3, PITCH.halfL - 3);
+    const z = clamp(p.z * 0.6, -PITCH.halfW + 2, PITCH.halfW - 2);
     return { x, z };
   }
 
@@ -302,7 +306,7 @@ export class AIDirector {
     if (ai.skillCD > 0) ai.skillCD -= dt;
     p.faceTarget = null; p.jockey = false; p.sprinting = false;
     if (m.phase !== 'play') { this.stop(p); return; }
-    if (p.role === 'GK') return this.keeperAct(p, dt);
+    if (p.line === 'GK') return this.keeperAct(p, dt);
     const T = this.team[p.team];
     const d = this.diff;
 
@@ -397,7 +401,7 @@ export class AIDirector {
         const g = { x: m.ownGoalX(p.team), z: 0 };
         const k = 0.38;
         const tx = g.x + (b.x - g.x) * k, tz = (b.z - g.z) * k * 0.8;
-        const minOut = COURT.boxR + 0.8;
+        const minOut = PITCH.boxR + 0.8;
         const dg = Math.hypot(tx - g.x, tz);
         const s = dg < minOut ? minOut / (dg || 1) : 1;
         this.goTo(p, g.x + (tx - g.x) * s, tz * s, maxSpeed(p, false), 0.4);
@@ -455,7 +459,7 @@ export class AIDirector {
     }
     // Loose ball near goal and we'd get there first: claim it.
     if (!b.owner) {
-      const inBox = Math.hypot(b.x - gx, b.z) < COURT.boxR + 1;
+      const inBox = Math.hypot(b.x - gx, b.z) < PITCH.boxR + 1;
       if (inBox && Math.hypot(b.vx, b.vz) < 9) {
         const mine = this.intercept(p).t;
         let theirs = Infinity;
@@ -494,14 +498,14 @@ export class AIDirector {
     if (!inFlight) ai.setZ = b.z;
     const out = clamp(0.5 + bl * 0.09, 0.6, ai.state === 'SET' ? 1.6 : 2.4);
     let tx = gx + bx / bl * out, tz = bz / bl * out;
-    tz = clamp(tz, -COURT.goalHalfW + 0.25, COURT.goalHalfW - 0.25);
+    tz = clamp(tz, -PITCH.goalHalfW + 0.25, PITCH.goalHalfW - 0.25);
     // 1v1: rush to narrow the angle.
     const o = b.owner;
     if (o && o.team !== p.team && this.team[p.team].gkRush) {
       // Human held "rush keeper": come off the line at the carrier.
       this.goTo(p, o.x, o.z, maxSpeed(p, true), 0.2); ai.label = 'RUSH'; return;
     }
-    if (o && o.team !== p.team && Math.hypot(o.x - gx, o.z) < COURT.boxR && (o.x - gx) * dir < 5) {
+    if (o && o.team !== p.team && Math.hypot(o.x - gx, o.z) < PITCH.boxR && (o.x - gx) * dir < 5) {
       tx = gx + (o.x - gx) * 0.55; tz = o.z * 0.55; ai.label = 'RUSH';
     }
     const sp = ai.state === 'SET' ? 3.5 : 5;
@@ -529,7 +533,7 @@ export class AIDirector {
         break;
       }
     }
-    const onTarget = pred.goal === -dir || (cross && Math.abs(cross.z) < COURT.goalHalfW + 0.3 && cross.y < COURT.goalH + 0.2);
+    const onTarget = pred.goal === -dir || (cross && Math.abs(cross.z) < PITCH.goalHalfW + 0.3 && cross.y < PITCH.goalH + 0.2);
     if (!onTarget || !cross) return false;
     // A keeper reads the line the ball is on, not the physics engine: if it's going
     // to hit the cage first, he can't know the rebound until he's seen it.
@@ -582,12 +586,14 @@ export class AIDirector {
     if (!g) return;
     const scorer = g.scorer;
     const dir = m.teams[g.team].dir;
-    const corner = { x: dir * (COURT.halfL - 2), z: scorer && scorer.z > 0 ? COURT.halfW - 2 : -COURT.halfW + 2 };
+    const corner = { x: dir * (PITCH.halfL - 2), z: scorer && scorer.z > 0 ? PITCH.halfW - 2 : -PITCH.halfW + 2 };
+    const chasers = scorer ? m.teamPlayers(g.team).filter(p => p !== scorer && p.line !== 'GK') : [];
     for (const p of m.players) {
       if (!p.active) continue;
       p.faceTarget = null;
+      const k = chasers.indexOf(p);
       if (p === scorer && !g.own) { p.sprinting = true; this.goTo(p, corner.x, corner.z, 6.5, 0.8); }
-      else if (p.team === g.team && scorer && p.role !== 'GK') { this.goTo(p, scorer.x - dir * 1.2, scorer.z + (p.slot - 2) * 0.9, 5.5, 1.2); }
+      else if (k >= 0) { this.goTo(p, scorer.x - dir * 1.2, scorer.z + (k - (chasers.length - 1) / 2) * 0.9, 5.5, 1.2); }
       else this.goTo(p, p.x - m.teams[p.team].dir * 0.8, p.z * 0.98, 1.3, 0.1);
     }
   }

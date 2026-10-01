@@ -2,12 +2,11 @@
 // main stand, a scrolling LED ribbon, and ~1200 instanced fans in one draw call.
 // The fans wear the two teams' colours, bob with the atmosphere and jump on goals.
 import * as THREE from 'three';
-import { COURT } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 import { ledRibbon } from './textures.js';
 
-const { halfL, halfW } = COURT;
-
 export function buildStands(scene, venue) {
+  const { halfL, halfW } = PITCH;
   const rows = 9, rise = 0.48, depth = 0.86;
   const concrete = new THREE.MeshStandardMaterial({ color: 0x2c313d, roughness: 0.9 });
   const seatA = new THREE.MeshStandardMaterial({ color: 0x1d3f8a, roughness: 0.7 });

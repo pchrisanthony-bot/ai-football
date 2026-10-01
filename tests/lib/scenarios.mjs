@@ -1,15 +1,15 @@
 // Gameplay measurement scenarios shared by tools/metrics.mjs and the regression tests:
 // stopping with the ball, the first touch, and the 90° cut — all through the real
 // HumanController, driven like a player's stick.
-import { scenario, lineOf } from './sim.mjs';
+import { scenario } from './sim.mjs';
 
 const R = 0.11;
 
 // ---------------------------------------------------------------- stopping with the ball
 export function stopTest(name, { sprint = false, turn = false, afterKnock = false, opponent = false, afterTouch = false, matchOpts = {} } = {}) {
-  const s = scenario({ ball: !afterTouch, x: afterTouch ? -4 : -13, matchOpts, others: opponent || afterTouch ? (q => (opponent && q.team === 1 && lineOf(q) === 'DEF') || (afterTouch && q.team === 0 && lineOf(q) === 'MID')) : null });
+  const s = scenario({ ball: !afterTouch, x: afterTouch ? -4 : -13, matchOpts, others: opponent || afterTouch ? (q => (opponent && q.team === 1 && q.line === 'DEF') || (afterTouch && q.team === 0 && q.line === 'MID')) : null });
   const btn = sprint ? ['sprint'] : [];
-  if (opponent) { const o = s.m.players.find(q => q.team === 1 && lineOf(q) === 'DEF'); Object.assign(o, { x: -1.5, z: 0.3 }); }
+  if (opponent) { const o = s.m.players.find(q => q.team === 1 && q.line === 'DEF'); Object.assign(o, { x: -1.5, z: 0.3 }); }
   if (afterTouch) {
     // a teammate plays it into the receiver's run from behind and to the side
     const mate = s.m.players.find(q => q.team === 0 && q.active && q !== s.p);
@@ -49,7 +49,7 @@ export function stopTest(name, { sprint = false, turn = false, afterKnock = fals
 
 // ---------------------------------------------------------------- first touch
 export function touchTest({ run = 0, from = 'front', speed = 10, input = 'none', control = null, cushion = false, matchOpts = {} }) {
-  const s = scenario({ x: 0, z: 0, matchOpts, others: q => q.team === 0 && lineOf(q) === 'MID' });
+  const s = scenario({ x: 0, z: 0, matchOpts, others: q => q.team === 0 && q.line === 'MID' });
   const p = s.p, b = s.ball;
   if (control != null) p.attrs = { ...p.attrs, control };
   const btn = cushion ? ['control'] : [];

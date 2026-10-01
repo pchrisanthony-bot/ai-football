@@ -11,8 +11,10 @@ const format = arg('format', null);
 const isolate = (H, o = {}) => H.eval((o) => {
   const m = __G.match, p = m.human;
   m.phase = 'play';
-  const line = q => q.line || ({ GK: 'GK', DEF: 'DEF', MID: 'MID', FWD: 'ATT' })[q.role];
-  for (const q of m.players) if (q !== p) { q.frozen = true; q.speed = 0; if (line(q) !== 'GK') { q.x = q.team === p.team ? -m.pitchHalfL?.() ?? -13 : 13; q.x = q.team === p.team ? -13 : 13; q.z = (q.slot - 2) * 3.2; } }
+  // Out of the way: team-mates lined up near our goal, opponents near theirs.
+  const others = m.players.filter(q => q !== p && q.line !== 'GK');
+  others.forEach((q, i) => { q.frozen = true; q.speed = 0; q.x = (q.team === p.team ? -1 : 1) * (m.oppGoalX(0) - 3); q.z = ((i % 5) - 2) * 3.2; });
+  for (const q of m.players) if (q !== p) { q.frozen = true; q.speed = 0; }
   Object.assign(p, { x: o.x ?? -8, z: o.z ?? 0, speed: 0, vx: 0, vz: 0, heading: 0, facing: 0, stamina: 1, action: null });
   m.loseBall();
   const b = m.ball;
@@ -57,7 +59,7 @@ const SCENARIOS = {
       await isolate(H, { x: -4, z: 0 });
       await H.eval(() => {
         const m = __G.match, p = m.human, b = m.ball;
-        const mate = m.players.find(q => q.team === p.team && q !== p && (q.line || q.role) !== 'GK');
+        const mate = m.players.find(q => q.team === p.team && q !== p && q.line !== 'GK');
         const v = 10 + (1.2 + 3.5) * 0.36;
         Object.assign(b, { x: p.x + 3.6, z: p.z, vx: -v, vz: 0, vy: 0, wx: 0, wz: v / 0.11, owner: null });
         b.passTo = p; b.passUntil = m.time + 3; b.lastKick = { pid: mate.id, team: p.team, kind: 'pass', t: m.time };

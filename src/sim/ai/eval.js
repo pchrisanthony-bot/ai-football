@@ -1,6 +1,7 @@
 // Evaluation functions for the AI: interception, threat, and the utility of
 // every on-ball option. Kept separate so the debug overlay can show the numbers.
-import { COURT, BALL, KICK, PLAYER } from '../../config.js';
+import { KICK } from '../../config.js';
+import { PITCH } from '../pitch.js';
 import { clamp, segDist2, angleDiff } from '../../util/math.js';
 import { groundPassSpeed, bankAim } from '../kicks.js';
 import { maxSpeed } from '../players.js';
@@ -9,7 +10,7 @@ import { maxSpeed } from '../players.js';
 export function threat(m, t, x, z) {
   const gx = m.oppGoalX(t);
   const d = Math.hypot(gx - x, z);
-  const centrality = 1 - Math.min(1, Math.abs(z) / COURT.halfW) * 0.35;
+  const centrality = 1 - Math.min(1, Math.abs(z) / PITCH.halfW) * 0.35;
   return clamp(1 - d / 30, 0, 1) ** 1.6 * centrality;
 }
 
@@ -40,7 +41,7 @@ export function laneRisk(m, team, path, ballTimeAt, ignore = null, reach = 0.6, 
       const tb = ballTimeAt(s);
       const px = A.x + (B.x - A.x) * t, pz = A.z + (B.z - A.z) * t;
       const to = reachTime(o, px, pz, reaction) - reach / 6;
-      const r = clamp(0.5 + (tb - to) / 0.35, 0, 1) * (o.role === 'GK' ? 0.8 : 1);
+      const r = clamp(0.5 + (tb - to) / 0.35, 0, 1) * (o.line === 'GK' ? 0.8 : 1);
       if (r > risk) { risk = r; worst = o; }
     }
     s0 += segLen;
@@ -106,7 +107,7 @@ export function evalShots(m, p) {
       const { risk } = laneRisk(m, t, o.path, bt, gk, 0.5, 0.15);
       const save = gk ? keeperSave(m, gk, o.path, bt, !!o.bank) : 0.03;
       // Visible angle of the goal from the shooter.
-      const openAngle = Math.abs(Math.atan2(COURT.goalHalfW, Math.abs(gx - b.x))) * (1 - Math.abs(b.z) / (COURT.halfW + 4));
+      const openAngle = Math.abs(Math.atan2(PITCH.goalHalfW, Math.abs(gx - b.x))) * (1 - Math.abs(b.z) / (PITCH.halfW + 4));
       const base = clamp(Math.exp(-(L - 5) / 11) * (0.55 + openAngle * 1.2), 0, 1) * (o.bank ? 0.97 : 1);
       const xg = base * (1 - risk) * (1 - save);
       // Banks are the specialist option: slightly discounted for execution risk.
@@ -124,7 +125,7 @@ export function evalPasses(m, p, runners = new Set()) {
   const here = threat(m, t, b.x, b.z);
   const out = [];
   for (const r of m.mates(p)) {
-    if (r.role === 'GK') continue;
+    if (r.line === 'GK') continue;
     const lead = m.leadTarget(p, r, runners.has(r));
     const through = runners.has(r);
     const d = Math.hypot(lead.x - b.x, lead.z - b.z);
@@ -180,10 +181,10 @@ export function evalDribble(m, p) {
     const ang = toGoal + off;
     const L = 3.5;
     let tx = p.x + Math.cos(ang) * L, tz = p.z + Math.sin(ang) * L;
-    if (Math.abs(tz) > COURT.halfW - 0.8 || Math.abs(tx) > COURT.halfL - 0.8) continue;
+    if (Math.abs(tz) > PITCH.halfW - 0.8 || Math.abs(tx) > PITCH.halfL - 0.8) continue;
     let space = 99;
     for (const o of m.opponents(p)) {
-      if (o.role === 'GK' && Math.hypot(o.x - tx, o.z - tz) > 3) continue;
+      if (o.line === 'GK' && Math.hypot(o.x - tx, o.z - tz) > 3) continue;
       space = Math.min(space, segDist2(o.x, o.z, p.x, p.z, tx, tz).d);
     }
     const prog = threat(m, t, tx, tz) - here;
@@ -197,7 +198,7 @@ export function evalDribble(m, p) {
 export function frontDefender(m, p, maxD = 2.8, cone = 0.9) {
   let best = null, bd = maxD;
   for (const d of m.opponents(p)) {
-    if (d.role === 'GK') continue;
+    if (d.line === 'GK') continue;
     const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz);
     if (dist > bd) continue;
     if (Math.abs(angleDiff(p.facing, Math.atan2(dz, dx))) > cone) continue;

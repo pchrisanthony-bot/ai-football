@@ -7,9 +7,6 @@ import { HumanController } from '../../src/game/human.js';
 
 export const FRAME = 1 / 60;
 
-// Tactical line of a player (works before and after the role/formation refactor).
-export const lineOf = p => p.line || { GK: 'GK', DEF: 'DEF', MID: 'MID', FWD: 'ATT' }[p.role];
-
 // Stands in for Input: which logical buttons are down this frame, the stick, and any
 // touch gesture/skill event, exactly as the browser's Input reports them.
 export class FakeInput {
@@ -36,11 +33,11 @@ export class FakeInput {
 export function scenario(opts = {}) {
   const m = new Match({ humanTeam: 0, seconds: 9999, seed: 1, ...(opts.matchOpts || {}) });
   m.phase = 'play';
-  const pick = opts.pick || (p => lineOf(p) === 'ATT');
-  const p = m.players.find(q => q.team === 0 && pick(q)) || m.players.find(q => q.team === 0 && lineOf(q) !== 'GK');
+  const pick = opts.pick || (p => p.line === 'ATT');
+  const p = m.players.find(q => q.team === 0 && pick(q)) || m.players.find(q => q.team === 0 && q.line !== 'GK');
   for (const q of m.players) {
     if (q === p) continue;
-    const keep = (opts.keepers && lineOf(q) === 'GK') || (opts.others && opts.others(q));
+    const keep = (opts.keepers && q.line === 'GK') || (opts.others && opts.others(q));
     q.active = !!keep;
     if (q.active) q.frozen = opts.frozenOthers ?? true;
   }

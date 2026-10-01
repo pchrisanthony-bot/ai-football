@@ -183,7 +183,7 @@ kbd { display: inline-block; font: 700 11px var(--body); padding: 2px 6px; borde
 .lu-head { font: 400 20px var(--display); letter-spacing: 2px; text-align: center; padding: 6px; background: var(--c); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
 .lu-row { display: grid; grid-template-columns: 38px 26px 1fr 40px; align-items: center; background: rgba(12,14,20,.86); border-bottom: 1px solid rgba(255,255,255,.06); min-height: 40px; }
 .lu-row .pos { font: 900 10px var(--body); letter-spacing: 1px; color: #fff; align-self: stretch; display: grid; place-items: center; writing-mode: horizontal-tb; }
-.pos-GK { background: #1aa36a; } .pos-DEF { background: #2d6fd6; } .pos-MID { background: #d6a21e; } .pos-FWD { background: #d63c3c; }
+.pos-GK { background: #1aa36a; } .pos-DEF { background: #2d6fd6; } .pos-MID { background: #d6a21e; } .pos-ATT { background: #d63c3c; }
 .lu-row b { font: 400 16px var(--display); color: var(--muted); text-align: center; }
 .lu-row span { font: 800 14px var(--body); padding: 4px 6px; display: flex; flex-direction: column; line-height: 1.15; }
 .lu-row small { font: 800 9px var(--body); letter-spacing: 1.5px; color: var(--accent); }

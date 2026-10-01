@@ -1,6 +1,8 @@
 // Debug telemetry: one snapshot of the numbers that matter when tuning feel and
 // scaling (player/ball motion, first touch, pitch/team size, camera, restarts).
 // Read by the play harness (window.__telemetry) and shown in the debug overlay (Tab).
+import { PITCH } from '../sim/pitch.js';
+
 export function makeTelemetry(getMatch, rig) {
   let prev = null;
   return function telemetry() {
@@ -13,9 +15,9 @@ export function makeTelemetry(getMatch, rig) {
     if (p) prev = { id: p.id, speed: p.speed, t: now };
     const ft = m.lastFirstTouch;
     return {
-      teamSize: m.teamSize ?? m.teamPlayers(0).length,
-      pitch: m.pitch ? { length: m.pitch.length, width: m.pitch.width, boundary: m.pitch.boundary } : null,
-      player: p ? { name: p.name, role: p.role, speed: +p.speed.toFixed(2), accel: +accel.toFixed(1), mode: p.dribble?.mode } : null,
+      format: m.cfg.format, teamSize: m.cfg.teamSize, formations: m.teams.map(t => t.formation),
+      pitch: { id: PITCH.id, length: PITCH.length, width: PITCH.width, boundary: PITCH.boundary },
+      player: p ? { name: p.name, role: p.role, line: p.line, speed: +p.speed.toFixed(2), accel: +accel.toFixed(1), mode: p.dribble?.mode } : null,
       ball: { speed: +Math.hypot(b.vx, b.vy, b.vz).toFixed(2), v: [+b.vx.toFixed(2), +b.vy.toFixed(2), +b.vz.toFixed(2)], owner: b.owner ? b.owner.name : null, lastTouch: b.lastTouch ? `${b.lastTouch.name} (${m.teams[b.lastTouch.team].def.short})` : null },
       gap: p ? +Math.hypot(b.x - p.x, b.z - p.z).toFixed(2) : null,
       firstTouch: ft ? { name: ft.name, inV: +ft.inV.toFixed(1), outV: +ft.outV.toFixed(1), quality: +ft.quality.toFixed(2), turn: Math.round(ft.turnDeg) } : null,
@@ -31,7 +33,7 @@ export function makeTelemetry(getMatch, rig) {
 export function telemetryText(t) {
   if (!t) return '';
   const rows = [
-    `format ${t.teamSize}v${t.teamSize}` + (t.pitch ? ` · pitch ${t.pitch.length}×${t.pitch.width} m ${t.pitch.boundary}` : ''),
+    `${t.format} · ${t.formations.join(' v ')} · pitch ${t.pitch.length}×${t.pitch.width} m ${t.pitch.boundary}`,
     t.player ? `${t.player.name} ${t.player.role} · ${t.player.speed} m/s · ${t.player.accel} m/s² · ${t.player.mode}` : '',
     `ball ${t.ball.speed} m/s · owner ${t.ball.owner ?? '—'} · last touch ${t.ball.lastTouch ?? '—'}` + (t.gap != null ? ` · gap ${t.gap} m` : ''),
     t.firstTouch ? `first touch ${t.firstTouch.name}: ${t.firstTouch.inV} → ${t.firstTouch.outV} m/s · q ${t.firstTouch.quality} · ${t.firstTouch.turn}°` : 'first touch —',

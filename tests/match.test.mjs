@@ -1,6 +1,6 @@
 // Headless AI-vs-AI matches: the whole sim + AI with no renderer.
 import { Match } from '../src/sim/match.js';
-import { SIM_DT, COURT } from '../src/config.js';
+import { SIM_DT } from '../src/config.js';
 
 export function playMatch(opts = {}, verbose = false) {
   const m = new Match({ humanTeam: null, seconds: 180, ...opts });

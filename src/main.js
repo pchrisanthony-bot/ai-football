@@ -10,7 +10,8 @@ import { FX } from './render/fx.js';
 import { CameraRig } from './render/camera.js';
 import { MatchView } from './render/matchview.js';
 import { Match } from './sim/match.js';
-import { SIM_DT, COURT, setSurface } from './config.js';
+import { SIM_DT, setSurface } from './config.js';
+import { PITCH } from './sim/pitch.js';
 import { Rain } from './render/weather.js';
 import { Input } from './input/input.js';
 import { TouchControls, isTouchDevice } from './input/touch.js';
@@ -18,8 +19,8 @@ import { HumanController } from './game/human.js';
 import { Audio } from './audio/audio.js';
 import { HUD } from './ui/hud.js';
 import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel, lineupsPanel } from './ui/menus.js';
-import { TEAMS } from './sim/players.js';
-import { DRILL_VARIANTS, setupDrill as setupDrillCore } from './game/drill.js';
+import { TEAMS } from './sim/squads.js';
+import { drillVariants, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
 import { prof } from './util/profiler.js';
 import { makeTelemetry, telemetryText } from './game/telemetry.js';
@@ -38,17 +39,19 @@ const VENUES = [
 const WEATHER = [{ label: 'CLEAR' }, { label: 'RAIN' }];
 const venues = {};
 let venue = null;
+// A venue is built for the live pitch (PITCH), so each (kind, pitch) pair is cached.
 function useVenue(kind) {
-  if (!venues[kind]) {
+  const key = `${kind}:${PITCH.id}`;
+  if (!venues[key]) {
     const root = new THREE.Group();
     R.scene.add(root);
-    venues[kind] = buildVenue(root, R.renderer, { kind });
-    venues[kind].root = root;
+    venues[key] = buildVenue(root, R.renderer, { kind });
+    venues[key].root = root;
   }
-  for (const k in venues) venues[k].root.visible = k === kind;
-  venue = venues[kind];
+  for (const k in venues) venues[k].root.visible = k === key;
+  venue = venues[key];
   R.scene.fog = venue.fog;
-    if (R.quality.level >= 0) R.setQuality(R.quality.level);
+  R.useLights(venue.lights);
 }
 useVenue('rooftop');
 const rain = new Rain(R.scene);
@@ -73,7 +76,6 @@ ui.appendChild(screens);
 
 const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0 };
 const GFX = ['AUTO', 'LOW', 'MEDIUM', 'HIGH', 'ULTRA'];
-R.quality.lights = venue.lights;
 
 // ---- performance governor: pick the best quality that holds ~60 fps on this machine.
 const perf = { acc: [], cap: 3 };
@@ -108,9 +110,11 @@ function clearScreens() { G.menu?.destroy(); G.menu = null; screens.innerHTML = 
 function addScreen(cls = 'screen') { const el = document.createElement('div'); el.className = cls; screens.appendChild(el); return el; }
 function nav() { audio.ui(); }
 
-function startMatchObject(opts, humanTeam) {
+// cond: [venue kind, surface, wet] — applied once the match has set the live pitch.
+function startMatchObject(opts, humanTeam, cond) {
   G.mview?.dispose();
   const m = new Match({ humanTeam, ...opts });
+  applyConditions(...cond);
   G.match = m;
   G.mview = new MatchView({ scene: R.scene, renderer: R.renderer, venue, fx, audio, rig, hud }, m);
   G.human = humanTeam == null ? null : new HumanController(m, humanTeam, input);
@@ -124,12 +128,11 @@ function startMatchObject(opts, humanTeam) {
 function toTitle() {
   clearScreens();
   G.state = 'title'; G.stateT = 0; G.spectate = false; G.drill = null;
-  applyConditions('rooftop', 'court', false);
   // Attract mode: two AI sides play behind the menu.
   const ids = TEAM_IDS;
   const hi = Math.floor(Math.random() * ids.length);
   const ai = (hi + 1 + Math.floor(Math.random() * (ids.length - 1))) % ids.length;
-  startMatchObject({ home: ids[hi], away: ids[ai], seconds: 600, difficulty: 0.7, seed: Math.floor(Math.random() * 1e6) }, null);
+  startMatchObject({ home: ids[hi], away: ids[ai], seconds: 600, difficulty: 0.7, seed: Math.floor(Math.random() * 1e6) }, null, ['rooftop', 'court', false]);
   hud.hide();
   const scr = addScreen('screen');
   titleScreen(scr);
@@ -183,11 +186,10 @@ function newMatch() {
   if (settings.home === settings.away) settings.away = (settings.away + 1) % TEAM_IDS.length;
   const md = MODES[settings.mode];
   const V = VENUES[settings.venue];
-  applyConditions(V.kind, V.surface, settings.weather === 1);
   return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
     difficulty: DIFFS[settings.diff].v, seed: Math.floor(Math.random() * 1e6),
-  }, G.spectate ? null : 0);
+  }, G.spectate ? null : 0, [V.kind, V.surface, settings.weather === 1]);
 }
 
 // Pre-match line-ups (FTS style): both squads, archetypes, ratings, kits.
@@ -366,8 +368,7 @@ function leaveDrill() {
 // ------------------------------------------------------------------ trick-shot drill
 function toDrill() {
   clearScreens();
-  applyConditions('rooftop', 'court', false);
-  startMatchObject({ home: 'cage', away: 'rooftop', mode: 'drill', seconds: 99999, difficulty: 0.6, seed: 7 }, 0);
+  startMatchObject({ home: 'cage', away: 'rooftop', mode: 'drill', seconds: 99999, difficulty: 0.6, seed: 7 }, 0, ['rooftop', 'court', false]);
   hud.show(); hud.setDebug(false); hud.setSpectate(false);
   G.drill = { attempts: 0, goals: 0, cage: 0, shotT: null, panel: null };
   const panel = document.createElement('div');
@@ -383,7 +384,7 @@ function toDrill() {
 
 function setupDrill() {
   const m = G.match, d = G.drill;
-  const v = DRILL_VARIANTS[d.attempts % DRILL_VARIANTS.length];
+  const vs = drillVariants(), v = vs[d.attempts % vs.length];
   const { shooter } = setupDrillCore(m, v);
   m.human = null;                 // reset clears every human flag; re-register the shooter
   G.human.setHuman(shooter);
@@ -504,7 +505,7 @@ function tick(dt) {
   // atmosphere
   if (m && (G.state === 'match' || G.state === 'intro')) {
     const b = m.ball;
-    const nearGoal = Math.max(0, (Math.abs(b.x) - 9) / 7);
+    const nearGoal = Math.max(0, (Math.abs(b.x) - (PITCH.halfL - 7)) / 7);
     const crowdBase = venue.kind === 'arena' ? 0.16 : 0.05;   // a stadium crowd vs a few mates on the roof
     crowdLevel += ((crowdBase + nearGoal * 0.1) - crowdLevel) * dt * 2;
     audio.setCrowd(crowdLevel);

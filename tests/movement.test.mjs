@@ -8,7 +8,7 @@ function solo(arch, withBall = false) {
   const m = new Match({ humanTeam: 0, mode: 'drill', seconds: 9999, seed: 1 });
   m.phase = 'play';
   for (const q of m.players) q.active = false;
-  const p = m.players.find(q => q.team === 0 && q.arch === arch) || m.players.find(q => q.team === 0 && q.slot === 4);
+  const p = m.players.find(q => q.team === 0 && q.arch === arch) || m.kickTaker(0);
   Object.assign(p, { active: true, x: -13, z: 0, speed: 0, vx: 0, vz: 0, heading: 0, facing: 0, human: true, stamina: 1 });
   m.human = p;
   if (withBall) { m.ball.x = p.x + 0.45; m.ball.z = p.z; m.gainPossession(p, true); }

@@ -1,7 +1,7 @@
 // Cameras. Broadcast (FTS-style side cam: high on the touchline, tracks the ball
 // with lag and zooms with the play), plus intro flyover, replay and orbit modes.
 import * as THREE from 'three';
-import { COURT } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 import { clamp } from '../util/math.js';
 
 export class CameraRig {
@@ -35,7 +35,7 @@ export class CameraRig {
     const lead = 0.35;
     let tx = ball.x + ball.vx * lead, tz = ball.z + ball.vz * lead * 0.5;
     if (human) { tx = tx * 0.75 + human.x * 0.25; tz = tz * 0.75 + human.z * 0.25; }
-    tx = clamp(tx, -COURT.halfL + 6, COURT.halfL - 6);
+    tx = clamp(tx, -PITCH.halfL + 6, PITCH.halfL - 6);
     tz = clamp(tz * 0.55, -3, 2.5);
     this.follow({ x: tx, y: 0, z: tz }, 3.2, dt);
     // Zoom: tighter near the goals and when play is compact.

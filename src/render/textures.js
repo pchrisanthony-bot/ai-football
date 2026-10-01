@@ -1,6 +1,6 @@
 // Procedural textures (no downloaded art): everything is drawn to canvases.
 import * as THREE from 'three';
-import { COURT } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 
 const cache = new Map();
 function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
@@ -20,8 +20,8 @@ function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 10139
 // ---------------------------------------------------------------- court
 // 64 px per metre over the court (32 × 18 m).
 export function courtTextures() {
-  return once('court', () => {
-    const PPM = 64, W = COURT.halfL * 2 * PPM, H = COURT.halfW * 2 * PPM;
+  return once(`court:${PITCH.id}`, () => {
+    const PPM = 64, W = PITCH.halfL * 2 * PPM, H = PITCH.halfW * 2 * PPM;
     const c = canvas(W, H), g = c.getContext('2d');
     const r = rng(7);
     // painted asphalt base
@@ -38,30 +38,30 @@ export function courtTextures() {
       g.fillStyle = `rgba(${r() < 0.7 ? '0,0,0' : '255,255,255'},${0.008 + r() * 0.018})`;
       g.beginPath(); g.ellipse(r() * W, r() * H, 20 + r() * 160, 8 + r() * 60, r() * Math.PI, 0, Math.PI * 2); g.fill();
     }
-    const X = x => (x + COURT.halfL) * PPM, Z = z => (z + COURT.halfW) * PPM;
+    const X = x => (x + PITCH.halfL) * PPM, Z = z => (z + PITCH.halfW) * PPM;
 
     // coloured zones: keeper areas + centre circle fill
     const zone = (x0, sgn) => {
       g.fillStyle = 'rgba(214, 48, 49, 0.55)';
-      g.beginPath(); g.arc(X(x0), Z(0), COURT.boxR * PPM, sgn > 0 ? -Math.PI / 2 : Math.PI / 2, sgn > 0 ? Math.PI / 2 : Math.PI * 1.5); g.fill();
+      g.beginPath(); g.arc(X(x0), Z(0), PITCH.boxR * PPM, sgn > 0 ? -Math.PI / 2 : Math.PI / 2, sgn > 0 ? Math.PI / 2 : Math.PI * 1.5); g.fill();
     };
-    zone(-COURT.halfL, 1); zone(COURT.halfL, -1);
+    zone(-PITCH.halfL, 1); zone(PITCH.halfL, -1);
     g.fillStyle = 'rgba(255, 212, 0, 0.18)';
-    g.beginPath(); g.arc(X(0), Z(0), COURT.centreR * PPM, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(X(0), Z(0), PITCH.centreR * PPM, 0, Math.PI * 2); g.fill();
 
     // lines
     const line = (w, col = 'rgba(245,245,240,0.92)') => { g.strokeStyle = col; g.lineWidth = w * PPM; };
     line(0.08);
-    g.strokeRect(X(-COURT.halfL) + 0.1 * PPM, Z(-COURT.halfW) + 0.1 * PPM, W - 0.2 * PPM, H - 0.2 * PPM);
-    g.beginPath(); g.moveTo(X(0), Z(-COURT.halfW)); g.lineTo(X(0), Z(COURT.halfW)); g.stroke();
-    g.beginPath(); g.arc(X(0), Z(0), COURT.centreR * PPM, 0, Math.PI * 2); g.stroke();
-    g.beginPath(); g.arc(X(-COURT.halfL), Z(0), COURT.boxR * PPM, -Math.PI / 2, Math.PI / 2); g.stroke();
-    g.beginPath(); g.arc(X(COURT.halfL), Z(0), COURT.boxR * PPM, Math.PI / 2, Math.PI * 1.5); g.stroke();
+    g.strokeRect(X(-PITCH.halfL) + 0.1 * PPM, Z(-PITCH.halfW) + 0.1 * PPM, W - 0.2 * PPM, H - 0.2 * PPM);
+    g.beginPath(); g.moveTo(X(0), Z(-PITCH.halfW)); g.lineTo(X(0), Z(PITCH.halfW)); g.stroke();
+    g.beginPath(); g.arc(X(0), Z(0), PITCH.centreR * PPM, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(X(-PITCH.halfL), Z(0), PITCH.boxR * PPM, -Math.PI / 2, Math.PI / 2); g.stroke();
+    g.beginPath(); g.arc(X(PITCH.halfL), Z(0), PITCH.boxR * PPM, Math.PI / 2, Math.PI * 1.5); g.stroke();
     g.fillStyle = 'rgba(245,245,240,0.92)';
-    for (const x of [0, -COURT.halfL + 6, COURT.halfL - 6, -COURT.halfL + 10, COURT.halfL - 10]) { g.beginPath(); g.arc(X(x), Z(0), 0.12 * PPM, 0, Math.PI * 2); g.fill(); }
+    for (const x of [0, -PITCH.halfL + 6, PITCH.halfL - 6, -PITCH.halfL + 10, PITCH.halfL - 10]) { g.beginPath(); g.arc(X(x), Z(0), 0.12 * PPM, 0, Math.PI * 2); g.fill(); }
     // yellow accent inner border
     line(0.05, 'rgba(255,212,0,0.75)');
-    g.strokeRect(X(-COURT.halfL) + 0.35 * PPM, Z(-COURT.halfW) + 0.35 * PPM, W - 0.7 * PPM, H - 0.7 * PPM);
+    g.strokeRect(X(-PITCH.halfL) + 0.35 * PPM, Z(-PITCH.halfW) + 0.35 * PPM, W - 0.7 * PPM, H - 0.7 * PPM);
 
     // centre logo
     g.save();
@@ -339,11 +339,11 @@ export function sprayTag(key, word, color = '#FFD400', { w = 512, h = 256, crown
 // Artificial turf: a mown checkerboard in two greens, blade grain, worn goalmouths
 // and centre, crisp white markings (same geometry as the street court).
 export function turfTextures() {
-  return once('turf', () => {
-    const PPM = 48, W = COURT.halfL * 2 * PPM, H = COURT.halfW * 2 * PPM;
+  return once(`turf:${PITCH.id}`, () => {
+    const PPM = 48, W = PITCH.halfL * 2 * PPM, H = PITCH.halfW * 2 * PPM;
     const c = canvas(W, H), g = c.getContext('2d');
     const r = rng(21);
-    const X = x => (x + COURT.halfL) * PPM, Z = z => (z + COURT.halfW) * PPM;
+    const X = x => (x + PITCH.halfL) * PPM, Z = z => (z + PITCH.halfW) * PPM;
     const sq = 2 * PPM;
     for (let i = 0; i * sq < W; i++) for (let j = 0; j * sq < H; j++) {
       const light = (i + j) % 2 === 0, stripe = i % 2 === 0;
@@ -355,17 +355,17 @@ export function turfTextures() {
     g.putImageData(img, 0, 0);
     // wear: goalmouths, the centre spot, and the keeper's line
     const wear = (x, z, rx, rz, a) => { const gr = g.createRadialGradient(X(x), Z(z), 0, X(x), Z(z), rx * PPM); gr.addColorStop(0, `rgba(150,140,90,${a})`); gr.addColorStop(1, 'rgba(150,140,90,0)'); g.save(); g.translate(X(x), Z(z)); g.scale(1, rz / rx); g.translate(-X(x), -Z(z)); g.fillStyle = gr; g.beginPath(); g.arc(X(x), Z(z), rx * PPM, 0, Math.PI * 2); g.fill(); g.restore(); };
-    wear(-COURT.halfL + 1.2, 0, 3, 2, 0.35); wear(COURT.halfL - 1.2, 0, 3, 2, 0.35); wear(0, 0, 3.2, 2.4, 0.22);
+    wear(-PITCH.halfL + 1.2, 0, 3, 2, 0.35); wear(PITCH.halfL - 1.2, 0, 3, 2, 0.35); wear(0, 0, 3.2, 2.4, 0.22);
     for (let i = 0; i < 70; i++) wear((r() - 0.5) * 30, (r() - 0.5) * 16, 0.5 + r() * 1.5, 0.3 + r() * 0.8, 0.06 + r() * 0.08);
     // markings
     g.strokeStyle = 'rgba(250,250,245,0.95)'; g.lineWidth = 0.09 * PPM;
-    g.strokeRect(X(-COURT.halfL) + 0.15 * PPM, Z(-COURT.halfW) + 0.15 * PPM, W - 0.3 * PPM, H - 0.3 * PPM);
-    g.beginPath(); g.moveTo(X(0), Z(-COURT.halfW)); g.lineTo(X(0), Z(COURT.halfW)); g.stroke();
-    g.beginPath(); g.arc(X(0), Z(0), COURT.centreR * PPM, 0, Math.PI * 2); g.stroke();
-    g.beginPath(); g.arc(X(-COURT.halfL), Z(0), COURT.boxR * PPM, -Math.PI / 2, Math.PI / 2); g.stroke();
-    g.beginPath(); g.arc(X(COURT.halfL), Z(0), COURT.boxR * PPM, Math.PI / 2, Math.PI * 1.5); g.stroke();
+    g.strokeRect(X(-PITCH.halfL) + 0.15 * PPM, Z(-PITCH.halfW) + 0.15 * PPM, W - 0.3 * PPM, H - 0.3 * PPM);
+    g.beginPath(); g.moveTo(X(0), Z(-PITCH.halfW)); g.lineTo(X(0), Z(PITCH.halfW)); g.stroke();
+    g.beginPath(); g.arc(X(0), Z(0), PITCH.centreR * PPM, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(X(-PITCH.halfL), Z(0), PITCH.boxR * PPM, -Math.PI / 2, Math.PI / 2); g.stroke();
+    g.beginPath(); g.arc(X(PITCH.halfL), Z(0), PITCH.boxR * PPM, Math.PI / 2, Math.PI * 1.5); g.stroke();
     g.fillStyle = 'rgba(250,250,245,0.95)';
-    for (const x of [0, -COURT.halfL + 6, COURT.halfL - 6]) { g.beginPath(); g.arc(X(x), Z(0), 0.13 * PPM, 0, Math.PI * 2); g.fill(); }
+    for (const x of [0, -PITCH.halfL + 6, PITCH.halfL - 6]) { g.beginPath(); g.arc(X(x), Z(0), 0.13 * PPM, 0, Math.PI * 2); g.fill(); }
     const map = tex(c, { aniso: 16 });
     const rc = canvas(256, 144), rg = rc.getContext('2d');
     rg.fillStyle = '#f0f0f0'; rg.fillRect(0, 0, 256, 144);

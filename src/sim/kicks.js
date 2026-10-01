@@ -1,7 +1,8 @@
 // Kick solvers. Everything is solved against the real ball integrator
 // (predictPath), so what the AI aims, what the preview shows and what the
 // ball does are the same thing.
-import { BALL, COURT } from '../config.js';
+import { BALL } from '../config.js';
+import { PITCH } from './pitch.js';
 import { makeBall, predictPath } from './ball.js';
 import { clamp } from '../util/math.js';
 
@@ -84,7 +85,7 @@ export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null,
   let tGuess = hd / (speed * 0.9);
   if (angle0 != null) {
     const dirX = Math.cos(ang), dirZ = Math.sin(ang);
-    const wz = Math.sign(dirZ) * (COURT.halfW - BALL.r);
+    const wz = Math.sign(dirZ) * (PITCH.halfW - BALL.r);
     const leg1 = Math.abs(dirZ) > 1e-3 ? Math.abs((wz - ball.z) / dirZ) : hd;
     const total = Math.abs((goalX - ball.x) / (dirX || 1e-3));
     tGuess = leg1 / (speed * 0.9) + Math.max(0, total - leg1) / (speed * 0.9 * 0.85);
@@ -101,7 +102,7 @@ export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null,
     if (!cross) {
       // Never reached the line (cleared the bar into the fence, or died short): adjust lift and retry.
       const end = p.pts[p.pts.length - 1];
-      vy = end.y > 1 || p.events.some(e => e.type === 'wall' && Math.abs(Math.abs(e.x) - COURT.halfL) < 0.05) ? vy * 0.6 : vy * 1.2 + 0.5;
+      vy = end.y > 1 || p.events.some(e => e.type === 'wall' && Math.abs(Math.abs(e.x) - PITCH.halfL) < 0.05) ? vy * 0.6 : vy * 1.2 + 0.5;
       continue;
     }
     const errZ = cross.z - tz, errY = cross.y - ty;
@@ -124,7 +125,7 @@ export function solveStrike(ball, goalX, ty, tz, speed, { wy = 0, angle0 = null,
 // bounce point in closed form:  L = d1·tan θ + d2·(et/e)·tan θ.
 // (With et = e this reduces to the classic mirror-image method.)
 export function bankAim(bx, bz, tx, tz, wallSide) {
-  const wz = wallSide * (COURT.halfW - BALL.r);
+  const wz = wallSide * (PITCH.halfW - BALL.r);
   const d1 = Math.abs(wz - bz), d2 = Math.abs(wz - tz);
   const L = tx - bx;
   const k = BALL.wallT / BALL.wallE;

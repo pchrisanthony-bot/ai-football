@@ -1,6 +1,6 @@
 // Human controller: maps input onto the same Match API the AI uses.
 // Context-sensitive like FIFA: J passes with the ball, switches player without it.
-import { PLAYER, KICK, COURT } from '../config.js';
+import { KICK, SWITCH } from '../config.js';
 import { maxSpeed } from '../sim/players.js';
 import { clamp, rotateTowards } from '../util/math.js';
 
@@ -13,7 +13,8 @@ export class HumanController {
     this.setHuman(this.pickStart());
   }
 
-  pickStart() { return this.m.players.find(p => p.team === this.team && p.slot === 4) || this.m.teamPlayers(this.team)[0]; }
+  // Start on the man taking the kick-off (or the nearest to the ball when he's gone).
+  pickStart() { return this.m.kickTaker(this.team) || this.bestDefender(); }
 
   get p() { return this.m.human; }
 
@@ -171,33 +172,39 @@ export class HumanController {
   chargeLevel() { return this.charge ? clamp(this.charge.t / KICK.chargeTime, 0, 1) : 0; }
 
   // ---- player switching
+  // Without the ball the human follows the team-mate best placed to win it: the one
+  // who gets to it soonest (a loose ball: where it's going, not where it is), shaded
+  // toward men goal-side of it. Scored in seconds, so it reads the same on any pitch.
+  switchScore(q) {
+    const m = this.m, b = m.ball, gx = m.ownGoalX(this.team);
+    const goalSide = Math.abs(q.x - gx) < Math.abs(b.x - gx) ? SWITCH.goalSide : 0;
+    return m.ai.intercept(q).t - goalSide;
+  }
+
   autoSwitch() {
     const m = this.m, b = m.ball, cur = this.p;
     if (this.charge) return;
     const o = b.owner;
-    if (o && o.team === this.team && o !== cur && o.role !== 'GK') { this.setHuman(o); return; }
-    if (b.passTo && b.passTo.team === this.team && b.passTo !== cur && b.passTo.role !== 'GK') { this.setHuman(b.passTo); return; }
+    if (o && o.team === this.team && o !== cur && o.line !== 'GK') { this.setHuman(o); return; }
+    if (b.passTo && b.passTo.team === this.team && b.passTo !== cur && b.passTo.line !== 'GK') { this.setHuman(b.passTo); return; }
     if (o && o.team === this.team) return;
-    // Defending or loose: follow the best-placed defender, with hysteresis.
+    // Defending or loose: follow the best-placed man, with hysteresis — readily right
+    // after the ball changes hands, otherwise only for a clearly better one.
     if (this.switchCD > 0) return;
-    const best = this.bestDefender();
-    if (!best || best === cur) return;
-    const dc = Math.hypot(cur.x - b.x, cur.z - b.z), db = Math.hypot(best.x - b.x, best.z - b.z);
     const changed = o !== this.lastOwner;
     this.lastOwner = o;
-    if ((changed && db < dc - 1) || db < dc - 6) this.setHuman(best);
+    const best = this.bestDefender();
+    if (!best || best === cur) return;
+    const sc = this.switchScore(cur), sb = this.switchScore(best);
+    if ((changed && sb < sc - SWITCH.onChange) || sb < sc - SWITCH.margin) this.setHuman(best);
   }
 
   bestDefender(exclude = null) {
-    const m = this.m, b = m.ball;
-    let best = null, bd = Infinity;
-    const gx = m.ownGoalX(this.team);
-    for (const q of m.teamPlayers(this.team)) {
-      if (q.role === 'GK' || q === exclude) continue;
-      // prefer players goal-side of the ball
-      const goalSide = Math.abs(q.x - gx) < Math.abs(b.x - gx) ? -1.5 : 0;
-      const d = Math.hypot(q.x - b.x, q.z - b.z) + goalSide;
-      if (d < bd) { bd = d; best = q; }
+    let best = null, bs = Infinity;
+    for (const q of this.m.teamPlayers(this.team)) {
+      if (q.line === 'GK' || q === exclude) continue;
+      const s = this.switchScore(q);
+      if (s < bs) { bs = s; best = q; }
     }
     return best;
   }

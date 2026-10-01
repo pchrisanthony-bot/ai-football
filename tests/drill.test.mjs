@@ -1,11 +1,12 @@
 // Headless trick-shot drill: real keeper AI, frozen defender, human-style manual bank shot.
 import { Match } from '../src/sim/match.js';
-import { SIM_DT, COURT, BALL } from '../src/config.js';
+import { SIM_DT, BALL } from '../src/config.js';
+import { PITCH } from '../src/sim/pitch.js';
 import { bankAim } from '../src/sim/kicks.js';
 import { predictPath, makeBall } from '../src/sim/ball.js';
 
-import { DRILL_VARIANTS as VARIANTS, setupDrill as setupDrillCore } from '../src/game/drill.js';
-export { VARIANTS };
+import { drillVariants, setupDrill as setupDrillCore } from '../src/game/drill.js';
+export const VARIANTS = drillVariants();
 export function setupDrill(m, v) { const r = setupDrillCore(m, v); m.human = r.shooter; r.shooter.human = true; return r; }
 
 // Find the manual angle whose preview ends in the goal (like a player watching the dotted line).
@@ -15,7 +16,7 @@ function aimFor(m, p, tz, w, power) {
   // safe 0.3 m inside the post (shooting at the middle means shooting at him).
   const b = m.ball;
   const gk = m.keeper(1);
-  const base = bankAim(b.x, b.z, COURT.halfL, tz, w).angle;
+  const base = bankAim(b.x, b.z, PITCH.halfL, tz, w).angle;
   let best = null, bestD = -1;
   for (let da = -0.12; da <= 0.12; da += 0.002) {
     const ang = base + da;
@@ -24,7 +25,7 @@ function aimFor(m, p, tz, w, power) {
     const pr = predictPath(bb, 2, 1 / 60);
     const g = pr.events.find(e => e.type === 'goal');
     if (!g || !pr.events.some(e => e.type === 'wall') || pr.events.some(e => e.type === 'post')) continue;
-    if (Math.abs(g.z) > COURT.goalHalfW - 0.3) continue;
+    if (Math.abs(g.z) > PITCH.goalHalfW - 0.3) continue;
     const d = Math.abs(g.z - gk.z);
     if (d > bestD) { bestD = d; best = ang; }
   }

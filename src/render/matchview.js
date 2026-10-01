@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { Athlete } from './athlete.js';
 import { BallView } from './ballview.js';
 import { predictPath, copyBall } from '../sim/ball.js';
-import { COURT, BALL } from '../config.js';
+import { BALL } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 import { radialTexture } from './textures.js';
 
 const REPLAY_SECS = 7;
@@ -225,7 +226,7 @@ export class MatchView {
           hud.flash(0.35);
           const T = m.teams[e.team];
           const kit = T.def.kit;
-          fx.confetti(T.dir * COURT.halfL * 0.8, 0, [kit.shirt, kit.trim, '#ffffff']);
+          fx.confetti(T.dir * PITCH.halfL * 0.8, 0, [kit.shirt, kit.trim, '#ffffff']);
           this.goalMark = { frame: this.frames.length, team: e.team, info: e };
           break;
         }
@@ -257,7 +258,7 @@ export class MatchView {
     while (i > 0 && back < 4.5) { back += this.frames[i - 1].dt; i--; }
     let j = this.goalMark.frame, fwd = 0;
     while (j < this.frames.length - 1 && fwd < 1.5) { fwd += this.frames[j].dt; j++; }
-    this.replay = { i, start: i, end: j, acc: 0, speed: 0.75, cam: 0, goalX: this.m.teams[this.goalMark.team].dir * COURT.halfL };
+    this.replay = { i, start: i, end: j, acc: 0, speed: 0.75, cam: 0, goalX: this.m.teams[this.goalMark.team].dir * PITCH.halfL };
     return true;
   }
 

@@ -1,7 +1,8 @@
 // In-match HUD (DOM): broadcast score bug, style/GAMEBREAKER meters, callouts,
 // controlled-player tag with power + stamina, radar, and the AI debug overlay.
 import * as THREE from 'three';
-import { COURT, STYLE } from '../config.js';
+import { STYLE } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 import { crest } from './crest.js';
 
 const h = (tag, cls, html = '') => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
@@ -212,8 +213,8 @@ export class HUD {
     c.strokeRect(6, 6, W - 12, H - 12);
     c.beginPath(); c.moveTo(W / 2, 6); c.lineTo(W / 2, H - 6); c.stroke();
     c.beginPath(); c.arc(W / 2, H / 2, 16, 0, Math.PI * 2); c.stroke();
-    const X = x => 6 + (x + COURT.halfL) / (COURT.halfL * 2) * (W - 12);
-    const Z = z => 6 + (z + COURT.halfW) / (COURT.halfW * 2) * (H - 12);
+    const X = x => 6 + (x + PITCH.halfL) / PITCH.length * (W - 12);
+    const Z = z => 6 + (z + PITCH.halfW) / PITCH.width * (H - 12);
     for (const p of m.players) {
       if (!p.active) continue;
       c.fillStyle = m.teams[p.team].def.kit.shirt;

@@ -1,10 +1,8 @@
 // The venue: a floodlit rooftop cage at night, city all around.
 import * as THREE from 'three';
-import { COURT } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 import { courtTextures, chainLink, netTexture, graffitiBoard, concreteTexture, radialTexture, bannerTexture, sprayTag, turfTextures, adBoard } from './textures.js';
 import { buildStands, towerHead } from './stadium.js';
-
-const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH } = COURT;
 
 // ------------------------------------------------------------------ ripple FX (fence + nets)
 // Up to 8 live impacts; vertices are pushed along the surface normal by a decaying ring wave.
@@ -51,6 +49,7 @@ class Ripples {
 // turf, stands and a crowd — the FTS 15 look). Builds into `scene` (a Group) and
 // hands back its fog separately so venues can be swapped.
 export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
+  const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH } = PITCH;
   const arena = kind === 'arena';
   const venue = { kind, fence: new Ripples(), nets: new Ripples(), nearFade: [], lights: [], animated: [] };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
