@@ -1,0 +1,110 @@
+{
+ "jog": {
+  "bodySpeed": 5.02,
+  "footContact": 0.31,
+  "skate": 0.63,
+  "skateVsBody": 0.12,
+  "skatingShare": 0.15,
+  "sink": 0,
+  "float": 0.112,
+  "yawSnaps": 0,
+  "popMaxRadS": 15.6,
+  "popAt": "shinL.x @48 0.52→0.78"
+ },
+ "sprint": {
+  "bodySpeed": 7.16,
+  "footContact": 0.19,
+  "skate": 1.28,
+  "skateVsBody": 0.18,
+  "skatingShare": 0.17,
+  "sink": 0,
+  "float": 0.184,
+  "yawSnaps": 0,
+  "popMaxRadS": 16.8,
+  "popAt": "shinR.x @52 0.60→0.88"
+ },
+ "start from still": {
+  "bodySpeed": 4.47,
+  "footContact": 0.38,
+  "skate": 0.49,
+  "skateVsBody": 0.11,
+  "skatingShare": 0.09,
+  "sink": 0,
+  "float": 0.139,
+  "yawSnaps": 0,
+  "popMaxRadS": 14.9,
+  "popAt": "shinL.x @39 0.60→0.85"
+ },
+ "stop from sprint": {
+  "bodySpeed": 1.28,
+  "footContact": 0.58,
+  "skate": 0.12,
+  "skateVsBody": 0.1,
+  "skatingShare": 0.08,
+  "sink": 0,
+  "float": 0.075,
+  "yawSnaps": 0,
+  "popMaxRadS": 14.7,
+  "popAt": "shinR.x @17 0.81→1.06"
+ },
+ "90° cut at sprint": {
+  "bodySpeed": 5.79,
+  "footContact": 0.26,
+  "skate": 1.12,
+  "skateVsBody": 0.19,
+  "skatingShare": 0.2,
+  "sink": 0.001,
+  "float": 0.171,
+  "yawSnaps": 0,
+  "popMaxRadS": 22.6,
+  "popAt": "shinL.x @16 0.49→0.87"
+ },
+ "180° turn at jog": {
+  "bodySpeed": 3.45,
+  "footContact": 0.33,
+  "skate": 0.84,
+  "skateVsBody": 0.24,
+  "skatingShare": 0.35,
+  "sink": 0,
+  "float": 0.117,
+  "yawSnaps": 8,
+  "popMaxRadS": 13.8,
+  "popAt": "shinR.x @8 0.72→0.49"
+ },
+ "jockey sideways": {
+  "bodySpeed": 3.52,
+  "footContact": 0.42,
+  "skate": 0.69,
+  "skateVsBody": 0.2,
+  "skatingShare": 0.14,
+  "sink": 0.001,
+  "float": 0.022,
+  "yawSnaps": 0,
+  "popMaxRadS": 23.3,
+  "popAt": "shinR.x @4 0.52→0.91"
+ },
+ "turn on the spot": {
+  "bodySpeed": 0,
+  "footContact": 0.92,
+  "skate": 0.09,
+  "skateVsBody": null,
+  "skatingShare": 0,
+  "sink": 0,
+  "float": 0,
+  "yawSnaps": 0,
+  "popMaxRadS": 5.6,
+  "popAt": "shinL.x @12 0.59→0.69"
+ },
+ "dribble jog": {
+  "bodySpeed": 4.72,
+  "footContact": 0.32,
+  "skate": 0.52,
+  "skateVsBody": 0.11,
+  "skatingShare": 0.13,
+  "sink": 0,
+  "float": 0.103,
+  "yawSnaps": 0,
+  "popMaxRadS": 16.1,
+  "popAt": "shinL.x @47 0.53→0.80"
+ }
+}

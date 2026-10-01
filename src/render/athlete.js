@@ -1,7 +1,8 @@
 // =====================================================================
 // Athletes: a code-built skeleton with segmented low-poly body parts and a
 // fully procedural animation system.
-//  • Locomotion: gait phase advances by DISTANCE / stride length → no foot sliding.
+//  • Locomotion: foot-planted gait (gait.js) + two-bone leg IK — a planted foot is
+//    locked to the pitch (no skating), a swinging foot lands where the body will be.
 //  • Legs follow the velocity heading, torso follows the facing (jockey, shield).
 //  • Actions (kicks, tackles, slides, dives, skills, celebrations) are keyed poses
 //    timed to the sim's contact frames.
@@ -14,6 +15,20 @@ import { clamp, lerp, smooth, wrapAngle } from '../util/math.js';
 import { shirtTexture } from './textures.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PLAYER } from '../config.js';
+import { Gait } from './gait.js';
+
+const THIGH = 0.44, SHIN = 0.43;     // bone lengths (local units)
+// Which leg an action poses itself (the other stays planted): 'kick' = the kicking leg,
+// 'both' = the whole body is keyed (dives, slides…). Anything else: both legs on the gait.
+const ACTION_LEGS = {
+  pass: 'kick', through: 'kick', shot: 'kick', volley: 'kick', clear: 'kick', lob: 'kick', panna: 'kick',
+  tackle: 'kick', dragback: 'kick', rainbow: 'kick', flickup: 'kick', stepover: 'step',
+  slide: 'both', dive: 'both', header: 'both', stumble: 'both', getup: 'both', throw: 'both', roulette: 'both',
+};
+// A celebration runs on the gait, except the knee slide at the end of style 2.
+const actionLegs = (a, style) => (a.type === 'celebrate' ? (style === 2 && a.t > 1.5 ? 'both' : null) : ACTION_LEGS[a.type]);
+const _v = new THREE.Vector3(), _m = new THREE.Matrix4();
+const LEGS = ['L', 'R'];
 
 const TAU = Math.PI * 2;
 const ATLAS_V0 = 32 / 288;      // kit atlas: 256 px shirt + a 32 px plain strip at the bottom
@@ -26,29 +41,46 @@ export const CHANNELS = [
   ['thighR', 'x'], ['thighR', 'y'], ['thighR', 'z'], ['shinR', 'x'], ['footR', 'x'],
 ];
 const CH_INDEX = Object.fromEntries(CHANNELS.map((c, i) => [c.join('.'), i]));
+// Per-leg channel indices for the IK (looked up once, not per frame).
+const LEG = Object.fromEntries(['L', 'R'].map(f => [f, {
+  thighX: CH_INDEX[`thigh${f}.x`], thighY: CH_INDEX[`thigh${f}.y`], thighZ: CH_INDEX[`thigh${f}.z`],
+  shin: CH_INDEX[`shin${f}.x`], foot: CH_INDEX[`foot${f}.x`], sx: f === 'L' ? 1 : -1,
+}]));
+const HIPS_Y = CH_INDEX['hips.y'], HIPS_PY = CH_INDEX['hips.py'], BODY_X = CH_INDEX['body.x'];
 
 // ------------------------------------------------------------------ shared geometry
 const G = {};
 function geos() {
   if (G.ready) return G;
   const lathe = (pts, seg = 20) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
-  G.torso = lathe([[0.001, 0], [0.135, 0.0], [0.15, 0.08], [0.165, 0.2], [0.185, 0.33], [0.19, 0.4], [0.16, 0.46], [0.07, 0.5], [0.001, 0.5]]);
+  // Athletic shapes, not tubes: every limb is a lathe of a real profile (bone at the top,
+  // running down −y): quads that taper to the knee, a calf that bulges at the back,
+  // shoulders, biceps, forearms narrowing to the wrist.
+  // (a lathe faces outward when its profile runs bottom → top; limbs are written top → bottom)
+  const limb = (pts, seg) => lathe(pts.slice().reverse(), seg);
+  const bulgeBack = (g, y0, y1, amt) => {     // push a band of the profile toward the back (−z)
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) { const y = pos.getY(i), z = pos.getZ(i); if (y < y0 && y > y1 && z < 0) pos.setZ(i, z * (1 + amt * Math.sin(Math.PI * (y0 - y) / (y0 - y1)))); }
+    g.computeVertexNormals();
+    return g;
+  };
+  G.torso = lathe([[0.001, 0], [0.14, 0.0], [0.15, 0.08], [0.16, 0.2], [0.188, 0.31], [0.2, 0.39], [0.172, 0.455], [0.08, 0.5], [0.001, 0.5]]);
   // Map v by height (not by profile index) so the shirt number sits mid-back.
   { const pos = G.torso.attributes.position, uv = G.torso.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setY(i, ATLAS_V0 + (1 - ATLAS_V0) * pos.getY(i) / 0.5); }
   G.torso.scale(1, 1, 0.68);
-  G.shorts = lathe([[0.001, -0.12], [0.16, -0.12], [0.165, -0.02], [0.145, 0.1], [0.001, 0.1]]);
-  G.shorts.scale(1, 1, 0.72);
-  const cap = (r, l) => { const g = new THREE.CapsuleGeometry(r, l, 4, 10); g.translate(0, -l / 2 - r * 0.2, 0); return g; };
-  G.thigh = cap(0.068, 0.34);
-  G.shortLeg = new THREE.CylinderGeometry(0.088, 0.082, 0.2, 12); G.shortLeg.translate(0, -0.08, 0);
-  G.shin = cap(0.054, 0.33);
-  G.sock = new THREE.CylinderGeometry(0.06, 0.05, 0.3, 12); G.sock.translate(0, -0.2, 0);
+  G.shorts = lathe([[0.001, -0.12], [0.165, -0.12], [0.17, -0.02], [0.148, 0.1], [0.001, 0.1]]);
+  G.shorts.scale(1, 1, 0.74);
+  G.thigh = limb([[0.001, 0.02], [0.07, 0.01], [0.088, -0.05], [0.09, -0.13], [0.083, -0.24], [0.071, -0.35], [0.061, -0.42], [0.056, -0.46], [0.001, -0.475]], 12);
+  G.thigh.scale(1, 1, 1.06);
+  G.shortLeg = new THREE.CylinderGeometry(0.102, 0.096, 0.25, 12, 1, true); G.shortLeg.translate(0, -0.1, 0);
+  G.shin = bulgeBack(limb([[0.001, 0.035], [0.054, 0.025], [0.06, -0.02], [0.062, -0.08], [0.066, -0.14], [0.06, -0.22], [0.049, -0.31], [0.04, -0.39], [0.037, -0.43], [0.001, -0.45]], 12), -0.03, -0.3, 0.35);
+  G.sock = bulgeBack(limb([[0.066, -0.09], [0.071, -0.14], [0.066, -0.22], [0.054, -0.31], [0.046, -0.39], [0.044, -0.43]], 12), -0.08, -0.3, 0.35);
   G.boot = new THREE.CapsuleGeometry(0.048, 0.15, 4, 8); G.boot.rotateX(Math.PI / 2); G.boot.scale(1.15, 0.85, 1); G.boot.translate(0, -0.02, 0.06);
   G.sole = new THREE.BoxGeometry(0.1, 0.02, 0.26); G.sole.translate(0, -0.058, 0.06);
-  G.upperArm = cap(0.046, 0.22);
-  G.sleeve = new THREE.CylinderGeometry(0.062, 0.056, 0.15, 12); G.sleeve.translate(0, -0.05, 0);
-  G.fore = cap(0.04, 0.2);
-  G.hand = new THREE.SphereGeometry(0.046, 10, 8);
+  G.upperArm = limb([[0.001, 0.055], [0.05, 0.048], [0.066, 0.0], [0.063, -0.06], [0.057, -0.13], [0.05, -0.21], [0.044, -0.28], [0.04, -0.31], [0.001, -0.33]], 10);
+  G.sleeve = limb([[0.074, 0.045], [0.077, -0.02], [0.07, -0.14]], 10);
+  G.fore = limb([[0.001, 0.03], [0.042, 0.02], [0.049, -0.04], [0.046, -0.1], [0.038, -0.2], [0.031, -0.26], [0.001, -0.28]], 9);
+  G.hand = new THREE.SphereGeometry(0.046, 10, 8); G.hand.scale(0.78, 1.3, 0.5); G.hand.translate(0, -0.035, 0);
   G.glove = new THREE.SphereGeometry(0.068, 10, 8); G.glove.scale(1, 1.2, 0.7);
   G.neck = new THREE.CylinderGeometry(0.048, 0.055, 0.12, 10); G.neck.translate(0, 0.04, 0);
   G.head = new THREE.SphereGeometry(0.105, 18, 14); G.head.scale(0.94, 1.08, 1.0); G.head.translate(0, 0.1, 0);
@@ -171,6 +203,10 @@ export class Athlete {
     this.cur = new Float32Array(CHANNELS.length);
     this.vel = new Float32Array(CHANNELS.length);
     this.tgt = new Float32Array(CHANNELS.length);
+    this.out = new Float32Array(CHANNELS.length);   // the pose shown: springs + leg IK
+    this.gait = new Gait();
+    this.ikW = { L: 1, R: 1 };
+    this.hipDrop = 0;                                // m (local) the hips sink so a planted leg reaches
     this.yaw = { x: Math.PI / 2 - p.facing, v: 0 };
     this.lastHeading = p.heading;
     this.lastSpeed = 0;
@@ -189,7 +225,7 @@ export class Athlete {
   get(j, axis) { return this.tgt[CH_INDEX[j + '.' + axis]]; }
 
   // Called when the sim emits a dribble touch for this player.
-  touch(power) { this.touchT = 0; this.touchLeg = -this.touchLeg; this.touchPow = power; }
+  touch(power) { this.touchT = 0; this.touchLeg = -this.touchLeg; this.touchPow = power; this.touchFoot = null; }
 
   update(dt, match, ball) {
     const p = this.p;
@@ -204,16 +240,22 @@ export class Athlete {
     this.root.position.set(p.x, 0, p.z);
     const targetYaw = Math.PI / 2 - p.facing;
     const dy = wrapAngle(targetYaw - this.yaw.x);
-    this.yaw.x += dy * (1 - Math.exp(-(a && a.type === 'roulette' ? 60 : 22) * dt));
+    if (a && a.type === 'roulette') { this.yaw.x += dy * (1 - Math.exp(-60 * dt)); this.yaw.v = 0; }
+    else {
+      // critically damped spring on the body's turn: it eases in and out instead of snapping
+      // (capped at a human turn rate: ~630°/s)
+      const w = 15, f = 1 + 2 * dt * w, di = 1 / (f + dt * dt * w * w);
+      this.yaw.v = clamp((this.yaw.v + dt * w * w * dy) * di, -11, 11);
+      this.yaw.x += this.yaw.v * dt;
+    }
+    this.yaw.x = wrapAngle(this.yaw.x);
     this.root.rotation.y = this.yaw.x;
 
-    // ---- gait phase advances by distance travelled (no foot sliding)
+    // ---- the upper body swings with the gait (the legs are planted by the gait + IK)
     const speed = p.speed;
-    const stride = 1.05 + 0.24 * speed;
-    const moveAng = p.heading;
-    const rel = wrapAngle(moveAng - p.facing);        // travel direction relative to body
+    const rel = wrapAngle(p.heading - p.facing);      // travel direction relative to body
     const back = Math.abs(rel) > 2.0;
-    this.phase = (this.phase + (speed * dt) / stride * (back ? -1 : 1) + 1) % 1;
+    this.phase = this.gait.phase;
 
     // turn lean & accel pitch
     const dh = wrapAngle(p.heading - this.lastHeading) / Math.max(dt, 1e-3);
@@ -237,7 +279,96 @@ export class Athlete {
       this.cur[i] = (f * x + dt * v + hhoo * tg) * di;
       this.vel[i] = (v + hoo * (tg - x)) * di;
     }
-    this.apply(this.cur);
+    this.out.set(this.cur);
+    this.plantLegs(dt, a, ball);
+  }
+
+  // ------------------------------------------------------------------ planted legs
+  // The gait gives world-space ankle targets; two-bone IK bends each leg to reach them
+  // from where the hip really is this frame. Actions that pose a leg take it over (the
+  // other stays planted — a kick's support foot doesn't skate), and hand it back softly.
+  plantLegs(dt, a, ball) {
+    const p = this.p, s = p.look.build, out = this.out, J = this.J;
+    const legs = a ? actionLegs(a, this.celebrateStyle) : null;
+    const kickLeg = a && a.type === 'stepover' ? ((a.side || 1) > 0 ? 'R' : 'L') : (this.kickFoot > 0 ? 'R' : 'L');
+    const k = 1 - Math.exp(-dt * 14);
+    for (const f of ['L', 'R']) {
+      const want = legs === 'both' || ((legs === 'kick' || legs === 'step') && f === kickLeg) ? 0 : 1;
+      this.ikW[f] += (want - this.ikW[f]) * k;
+    }
+    // Pelvis yaw on the ground: the body's turn plus the hips' own turn toward travel.
+    const pelvisYaw = this.yaw.x + out[HIPS_Y];
+    const crouch = p.jockey || (p.line === 'GK' && p.speed < 2.5) ? 1 : 0;
+    const T = this.gait.update({ x: p.x, z: p.z, yaw: pelvisYaw, s, width: 0.11 + 0.05 * crouch, dt });
+    // A dribble touch: the foot in the air reaches out to the ball as it comes through
+    // (decided once per touch). A planted foot is never pulled off the pitch, and a foot
+    // that has only just pushed off behind him can't play a ball in front of him.
+    if (this.touchT < 0.2 && !a && ball.owner === p && !ball.inHands) {
+      const through = f => !T[f].planted && this.gait.feet[f].s > 0.4;
+      if (this.touchFoot == null) this.touchFoot = through('L') ? 'L' : through('R') ? 'R' : '';
+      const t = T[this.touchFoot];
+      if (t && !t.planted) {
+        const kk = Math.sin(Math.PI * this.touchT / 0.2) * 0.65;
+        t.x += (ball.x - t.x) * kk; t.z += (ball.z - t.z) * kk; t.y += 0.05 * s * kk;
+      }
+    }
+    // Hips: the gait's bob, then low enough that each planted leg can reach its foot —
+    // measured from where the hip joints really are this frame (the running lean puts
+    // them ahead of the feet). Down at once when a foot needs it, back up gently.
+    const py = HIPS_PY, w = Math.min(this.ikW.L, this.ikW.R);
+    this.apply(out);
+    J.hips.updateWorldMatrix(true, false);         // root → body → hips only (the legs are about to be set)
+    const reach = 0.97 * (THIGH + SHIN) * s;
+    let need = 0;
+    for (const [f, sx] of [['L', 1], ['R', -1]]) {
+      const t = T[f];
+      if (!t.planted || this.ikW[f] < 0.5) continue;
+      J.hips.localToWorld(_v.set(sx * 0.095, -0.02, 0));
+      const dh = Math.min(reach * 0.99, Math.hypot(t.x - _v.x, t.z - _v.z));
+      need = Math.max(need, (_v.y - t.y - Math.sqrt(reach * reach - dh * dh)) / s);
+    }
+    need = Math.min(need, 0.15);                     // a stride's worth; further than that the foot steps instead
+    this.hipDrop = need > this.hipDrop ? need : this.hipDrop + (need - this.hipDrop) * (1 - Math.exp(-dt * 8));
+    out[py] -= this.hipDrop * w;
+    J.hips.position.y = 0.95 + out[py];
+    J.hips.updateWorldMatrix(false, false);
+
+    const inv = _m.copy(J.hips.matrixWorld).invert();
+    for (const f of LEGS) {
+      const wf = this.ikW[f], L = LEG[f], sx = L.sx;
+      if (wf < 0.02) {
+        // posed by the action: keep the gait's foot where the animation has it, so the hand-back is seamless
+        J['foot' + f].getWorldPosition(_v);
+        this.gait.adopt(f, _v.x, _v.z, pelvisYaw);
+        continue;
+      }
+      const t = T[f];
+      _v.set(t.x, t.y, t.z).applyMatrix4(inv);               // ankle target in hip space
+      let dx = _v.x - sx * 0.095, dy = _v.y + 0.02, dz = _v.z;
+      // Never ask for more than the leg has: a far target keeps a soft knee, not a locked
+      // one. A planted foot about to overreach pushes off now instead (it never slides).
+      const far = Math.hypot(dx, dy, dz), most = 0.97 * (THIGH + SHIN);
+      if (far > most) {
+        if (t.planted && dz < 0) this.gait.overreach(f);      // (trailing behind the hip only)
+        const kf = most / far; dx *= kf; dy *= kf; dz *= kf;
+      }
+      const thZ = clamp(Math.atan2(dx, -dy), -0.95, 0.95);     // abduction: tilt the leg's plane to the target
+      const r = Math.hypot(dx, dy);
+      const D = clamp(Math.hypot(r, dz), 0.25, THIGH + SHIN - 1e-4);
+      const knee = Math.PI - Math.acos(clamp((THIGH * THIGH + SHIN * SHIN - D * D) / (2 * THIGH * SHIN), -1, 1));
+      const alpha = Math.acos(clamp((THIGH * THIGH + D * D - SHIN * SHIN) / (2 * THIGH * D), -1, 1));
+      const thX = Math.atan2(-dz, r) - alpha;
+      // the foot: flat on the pitch (heel up late in stance, toe up for the landing)
+      const footX = t.pitch - (out[BODY_X] + thX + knee);
+      out[L.thighX] += (thX - out[L.thighX]) * wf;
+      out[L.thighZ] += (thZ - out[L.thighZ]) * wf;
+      out[L.thighY] += (0 - out[L.thighY]) * wf;
+      out[L.shin] += (knee - out[L.shin]) * wf;
+      out[L.foot] += (footX - out[L.foot]) * wf;
+      J['thigh' + f].rotation.set(out[L.thighX], out[L.thighY], out[L.thighZ]);
+      J['shin' + f].rotation.x = out[L.shin];
+      J['foot' + f].rotation.x = out[L.foot];
+    }
   }
 
   apply(c) {
@@ -253,7 +384,7 @@ export class Athlete {
   locomotion(speed, rel, back, p, match, ball) {
     const sp = clamp(speed / PLAYER.sprint, 0, 1);
     const moving = smooth(clamp(speed / 1.2, 0, 1));
-    const w = this.phase * TAU;
+    const w = this.phase * TAU + Math.PI / 2;     // sin(w) = 1: the left leg forward, at its touchdown
     const sL = Math.sin(w), sR = Math.sin(w + Math.PI);
     const cL = Math.cos(w), cR = Math.cos(w + Math.PI);
     const thighAmp = lerp(0.3, 1.0, sp) * moving;
@@ -263,7 +394,7 @@ export class Athlete {
     // Lower body turns toward travel, upper body keeps the facing.
     let hipYaw = 0;
     if (speed > 0.6) hipYaw = back ? wrapAngle(rel - Math.PI) : rel;
-    hipYaw = clamp(hipYaw, -1.2, 1.2) * moving;
+    hipYaw = clamp(hipYaw, -1.2, 1.2) * moving * (crouch ? 0.35 : 1);   // a jockey / keeper shuffles square
     this.set('hips', 'y', hipYaw + 0.12 * sp * sL);
     this.set('spine', 'y', -hipYaw * 0.85 - 0.18 * sp * sL);
 
@@ -277,17 +408,19 @@ export class Athlete {
     this.set('thighL', 'z', 0.03 + crouch * 0.15);
     this.set('thighR', 'z', -0.03 - crouch * 0.15);
 
-    // hips bob (lowest at mid-stance when running)
+    // hips bob: lowest at mid-stance, highest in the flight phase of a run
     const bob = lerp(0.012, 0.055, sp) * moving;
-    this.set('hips', 'py', -bob * (0.5 + 0.5 * Math.cos(2 * w)) - crouch * 0.17 - 0.02 * moving);
+    const idle = 1 - moving;
+    this.set('hips', 'py', -bob * this.gait.stance - crouch * 0.17 - 0.03 * moving - 0.035 * idle);
 
     // torso lean: forward with speed & acceleration, into turns
     this.set('spine', 'x', 0.06 + 0.3 * sp + crouch * 0.35 + (p.closeControl ? 0.15 : 0) + 0.015 * Math.sin(this.t * 1.7));
-    this.set('body', 'x', this.pitch);
-    this.set('body', 'z', this.lean);
+    this.set('body', 'x', this.pitch + 0.1 * sp * moving);        // a runner leans from the ankles
+    // standing: the weight shifts slowly from foot to foot
+    this.set('body', 'z', this.lean + 0.025 * idle * Math.sin(this.t * 1.1 + this.p.id));
 
     // arms swing opposite the legs
-    const armAmp = lerp(0.18, 1.05, sp) * moving;
+    const armAmp = lerp(0.25, 1.15, sp) * moving;
     this.set('armL', 'x', armAmp * sL * 0.9);
     this.set('armR', 'x', armAmp * sR * 0.9);
     this.set('armL', 'z', 0.1 + crouch * 0.5 + (1 - moving) * 0.05);
@@ -539,7 +672,7 @@ export class Athlete {
   }
 
   // Replay support.
-  snapshot() { return this.cur.slice(); }
+  snapshot() { return this.out.slice(); }
   applySnapshot(arr, x, z, yaw) {
     this.root.position.set(x, 0, z);
     this.root.rotation.y = yaw;

@@ -1,0 +1,101 @@
+{
+ "jog": {
+  "bodySpeed": 5.02,
+  "footContact": 0.36,
+  "skate": 4.01,
+  "skateVsBody": 0.8,
+  "skatingShare": 0.83,
+  "sink": 0.083,
+  "float": 0.017,
+  "yawSnaps": 0,
+  "popMaxRadS": 9.4
+ },
+ "sprint": {
+  "bodySpeed": 7.16,
+  "footContact": 0.33,
+  "skate": 4.76,
+  "skateVsBody": 0.66,
+  "skatingShare": 0.79,
+  "sink": 0.085,
+  "float": 0.033,
+  "yawSnaps": 0,
+  "popMaxRadS": 12.4
+ },
+ "start from still": {
+  "bodySpeed": 4.47,
+  "footContact": 0.45,
+  "skate": 2.94,
+  "skateVsBody": 0.66,
+  "skatingShare": 0.84,
+  "sink": 0.087,
+  "float": 0.035,
+  "yawSnaps": 0,
+  "popMaxRadS": 11.1
+ },
+ "stop from sprint": {
+  "bodySpeed": 1.28,
+  "footContact": 0.76,
+  "skate": 0.77,
+  "skateVsBody": 0.61,
+  "skatingShare": 0.28,
+  "sink": 0.082,
+  "float": 0,
+  "yawSnaps": 0,
+  "popMaxRadS": 10.9
+ },
+ "90° cut at sprint": {
+  "bodySpeed": 5.79,
+  "footContact": 0.33,
+  "skate": 4.59,
+  "skateVsBody": 0.79,
+  "skatingShare": 0.91,
+  "sink": 0.109,
+  "float": 0.038,
+  "yawSnaps": 0,
+  "popMaxRadS": 11.8
+ },
+ "180° turn at jog": {
+  "bodySpeed": 3.45,
+  "footContact": 0.42,
+  "skate": 2.86,
+  "skateVsBody": 0.83,
+  "skatingShare": 0.83,
+  "sink": 0.087,
+  "float": 0.015,
+  "yawSnaps": 12,
+  "popMaxRadS": 10.3
+ },
+ "jockey sideways": {
+  "bodySpeed": 3.52,
+  "footContact": 0.4,
+  "skate": 5.4,
+  "skateVsBody": 1.54,
+  "skatingShare": 1,
+  "sink": 0.101,
+  "float": 0.008,
+  "yawSnaps": 0,
+  "popMaxRadS": 7.3
+ },
+ "turn on the spot": {
+  "bodySpeed": 0,
+  "footContact": 1,
+  "skate": 0.11,
+  "skateVsBody": null,
+  "skatingShare": 0.06,
+  "sink": 0.034,
+  "float": 0,
+  "yawSnaps": 0,
+  "popMaxRadS": 3.2
+ },
+ "dribble jog": {
+  "bodySpeed": 4.72,
+  "footContact": 0.32,
+  "skate": 3.8,
+  "skateVsBody": 0.8,
+  "skatingShare": 0.92,
+  "sink": 0.081,
+  "float": 0.08,
+  "yawSnaps": 0,
+  "popMaxRadS": 9.5
+ }
+}
