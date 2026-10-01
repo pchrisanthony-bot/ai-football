@@ -517,7 +517,7 @@ function tick(dt) {
   if (gbTeam) gbU.uGBColor.value.set(gbTeam.def.kit.trim);
 
   if (input.touch) {
-    const live = G.state === 'match' && m && (m.phase === 'play' || m.phase === 'kickoff');
+    const live = G.state === 'match' && m && (m.phase === 'play' || m.phase === 'restart');
     input.touch.setVisible(!!live && !!G.human, { drill: !!G.drill });
     if (live && m.human) {
       const o = m.ball.owner;

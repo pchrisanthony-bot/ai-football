@@ -5,9 +5,11 @@
 // validated restitution e = 0.70 applied to the NORMAL component (that's what a
 // coefficient of restitution is) and light friction on the tangential component.
 // A 30 m/s strike at 50° leaves the mesh at ~26 m/s — that's why cage banks bite.
+// Open pitches have no walls: the ball goes out of play (swept, see lineCrossing) and
+// runs on into the run-off until the advertising boards stop it.
 // =====================================================================
 import { BALL } from '../config.js';
-import { PITCH } from './pitch.js';
+import { PITCH, lineCrossing } from './pitch.js';
 
 const R = BALL.r;
 
@@ -17,11 +19,13 @@ export function makeBall() {
     vx: 0, vy: 0, vz: 0,
     wx: 0, wy: 0, wz: 0,       // spin (rad/s)
     goal: 0,                   // +1 = in the +x goal, −1 = in the −x goal
+    net: 0,                    // ±1 while inside that goal (entered through the mouth)
+    out: false,                // wholly over a line (open pitches)
   };
 }
 
 export function copyBall(b) {
-  return { x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, wx: b.wx, wy: b.wy, wz: b.wz, goal: b.goal };
+  return { x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, wx: b.wx, wy: b.wy, wz: b.wz, goal: b.goal, net: b.net || 0, out: !!b.out };
 }
 
 export const ballSpeed = b => Math.hypot(b.vx, b.vy, b.vz);
@@ -89,8 +93,50 @@ function contactFriction(b, jmax) {
   return sl - 2.5 * J;
 }
 
+// The goal's net box from OUTSIDE (open pitches: a ball wide of the post into the side
+// netting, over the bar onto the roof of the net, or round the back). The front face is
+// the mouth, so only a ball already behind the goal line can touch it.
+function netOutside(b, s, lineX, ev) {
+  const { goalHalfW, goalH, goalD } = PITCH;
+  const px = (b.x - lineX) * s;                       // depth behind the goal line
+  if (px <= 0 || px > goalD + R || Math.abs(b.z) > goalHalfW + R || b.y > goalH + R) return;
+  const cx = Math.min(goalD, px), cz = Math.max(-goalHalfW, Math.min(goalHalfW, b.z)), cy = Math.min(goalH, b.y);
+  const dx = px - cx, dy = b.y - cy, dz = b.z - cz, d = Math.hypot(dx, dy, dz);
+  if (d >= R) return;
+  // Outward normal of the face it touches (box frame: x = depth behind the line).
+  let nx = 0, ny = 0, nz = 0, qx = cx, qy = cy, qz = cz;
+  if (d > 1e-6) { nx = dx / d; ny = dy / d; nz = dz / d; }
+  else {
+    // Centre inside the box (it never came through the mouth): out by the nearest face.
+    const side = goalHalfW - Math.abs(b.z), top = goalH - b.y, back = goalD - px;
+    if (side <= top && side <= back) { nz = Math.sign(b.z) || 1; qz = nz * goalHalfW; }
+    else if (top <= back) { ny = 1; qy = goalH; }
+    else { nx = 1; qx = goalD; }
+  }
+  // Rest it against the net, then let the net take the pace off it.
+  b.x = lineX + s * (qx + nx * R); b.y = qy + ny * R; b.z = qz + nz * R;
+  const hit = reflect(b, s * nx, ny, nz, BALL.netE, 0.5);
+  if (hit > 0.8) ev && ev.push({ type: 'net', side: s, x: b.x, y: b.y, z: b.z, speed: hit, outside: true });
+}
+
+// Advertising boards round the run-off (open pitches): the ball stops there.
+function boards(b, ev) {
+  const { halfL, halfW, runoff, boardH } = PITCH;
+  if (b.y > boardH + R) return;
+  const bx = halfL + runoff, bz = halfW + runoff;
+  let nx = 0, nz = 0;
+  if (b.z > bz - R) { b.z = bz - R; nz = -1; } else if (b.z < -bz + R) { b.z = -bz + R; nz = 1; }
+  if (b.x > bx - R) { b.x = bx - R; nx = -1; } else if (b.x < -bx + R) { b.x = -bx + R; nx = 1; }
+  if (!nx && !nz) return;
+  const imp = reflect(b, nx, 0, nz, BALL.wallE, BALL.wallT);
+  if (imp > 0) mirrorSpin(b, nx, nz);
+  if (imp > 0.3) ev && ev.push({ type: 'board', x: b.x, y: b.y, z: b.z, nx, nz, speed: imp });
+}
+
 function integrate(b, h, ev) {
   const { halfL, halfW, roofH, goalHalfW, goalH, goalD, boardH } = PITCH;
+  const cage = PITCH.boundary === 'cage';
+  const x0 = b.x, y0 = b.y, z0 = b.z;
   const grounded = b.y <= R + 1e-4 && Math.abs(b.vy) < BALL.bounceMinVy;
 
   if (grounded) {
@@ -137,36 +183,40 @@ function integrate(b, h, ev) {
     }
   }
 
-  // --- roof net
-  if (b.y > roofH - R) {
+  // --- roof net (cage)
+  if (cage && b.y > roofH - R) {
     b.y = roofH - R;
     const imp = reflect(b, 0, -1, 0, BALL.roofE, 0.8);
     if (imp > 1) ev && ev.push({ type: 'roof', x: b.x, y: roofH, z: b.z, speed: imp });
   }
 
-  // --- side walls (full length, full height) 🔒
-  if (b.z > halfW - R) {
+  // --- side walls (cage: full length, full height) 🔒
+  if (cage && b.z > halfW - R) {
     b.z = halfW - R;
     const imp = reflect(b, 0, 0, -1, BALL.wallE, BALL.wallT);
     if (imp > 0) mirrorSpin(b, 0, -1);
     if (imp > 0.3) { ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: halfW, nx: 0, nz: -1, speed: imp, board: b.y < boardH }); }
-  } else if (b.z < -halfW + R) {
+  } else if (cage && b.z < -halfW + R) {
     b.z = -halfW + R;
     const imp = reflect(b, 0, 0, 1, BALL.wallE, BALL.wallT);
     if (imp > 0) mirrorSpin(b, 0, 1);
     if (imp > 0.3) { ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: -halfW, nx: 0, nz: 1, speed: imp, board: b.y < boardH }); }
   }
 
-  // --- end walls, goals, posts
+  // --- goals (mouth, net, posts) and the cage's end walls
   for (let s = -1; s <= 1; s += 2) {
     const lineX = s * halfL;
-    const past = (b.x - lineX) * s;                 // >0 = centre beyond the goal line
-    const inMouthZ = Math.abs(b.z) < goalHalfW;
-    const inGoal = past > 0 && Math.abs(b.z) < goalHalfW + R && b.y < goalH + R;
+    const past = (b.x - lineX) * s, past0 = (x0 - lineX) * s;   // >0 = centre beyond the goal line
+    // Into the goal through the mouth: the centre crosses the line between the posts, under the bar.
+    if (b.net !== s && past0 <= 0 && past > 0) {
+      const t = -past0 / (past - past0), zc = z0 + (b.z - z0) * t, yc = y0 + (b.y - y0) * t;
+      if (Math.abs(zc) < goalHalfW && yc < goalH) b.net = s;
+    }
+    if (b.net === s && past < -R) b.net = 0;        // back out into the field (off the inside of a post)
 
-    if (inGoal) {
+    if (b.net === s) {
       // Goal counts once the whole ball is over the line inside the frame.
-      if (!b.goal && past > R && inMouthZ && b.y < goalH) {
+      if (!b.goal && past > R) {
         b.goal = s;
         ev && ev.push({ type: 'goal', side: s, x: b.x, y: b.y, z: b.z, speed: Math.hypot(b.vx, b.vy, b.vz) });
       }
@@ -181,9 +231,10 @@ function integrate(b, h, ev) {
         b.vx *= d; b.vz *= d;
       }
       if (hit > 0.8) ev && ev.push({ type: 'net', side: s, x: b.x, y: b.y, z: b.z, speed: hit });
-    } else if (past > -R) {
+    } else if (!cage) netOutside(b, s, lineX, ev);
+    else if (past > -R) {
       // End wall (fence) everywhere except the goal mouth.
-      const inMouth = inMouthZ && b.y < goalH;
+      const inMouth = Math.abs(b.z) < goalHalfW && b.y < goalH;
       if (!inMouth) {
         b.x = s * (halfL - R);
         const imp = reflect(b, -s, 0, 0, BALL.wallE, BALL.wallT);
@@ -198,6 +249,18 @@ function integrate(b, h, ev) {
       collideSegment(b, lineX, 0, -goalHalfW, lineX, goalH, -goalHalfW, ev, 'post');
       collideSegment(b, lineX, goalH, -goalHalfW, lineX, goalH, goalHalfW, ev, 'bar');
     }
+  }
+
+  if (!cage) {
+    // Out of play: the whole ball over a line (a ball that went in through the mouth is a goal).
+    if (!b.out) {
+      const c = lineCrossing(x0, z0, b.x, b.z, R);
+      if (c && !(c.line === 'goal' && b.net === c.side)) {
+        b.out = true;
+        ev && ev.push({ type: 'out', line: c.line, side: c.side, x: c.x, z: c.z, y: y0 + (b.y - y0) * c.t });
+      }
+    }
+    boards(b, ev);
   }
 }
 
@@ -215,17 +278,18 @@ export function stepBall(b, dt, ev) {
 export function predictPath(start, seconds, step = 1 / 60) {
   const b = copyBall(start);
   b.goal = 0;
+  b.out = false;
   const pts = [{ x: b.x, y: b.y, z: b.z }];
   const events = [];
-  let goal = 0, t = 0;
+  let goal = 0, out = null, t = 0;
   while (t < seconds) {
     const ev = [];
     stepBall(b, step, ev);
     t += step;
-    for (const e of ev) { e.t = t; events.push(e); if (e.type === 'goal') goal = e.side; }
+    for (const e of ev) { e.t = t; events.push(e); if (e.type === 'goal') goal = e.side; if (e.type === 'out' && !out) out = e; }
     pts.push({ x: b.x, y: b.y, z: b.z });
-    if (goal) break;
+    if (goal || out) break;
     if (b.vx === 0 && b.vz === 0 && b.y <= R + 1e-3) break;
   }
-  return { pts, events, goal, end: b };
+  return { pts, events, goal, out, end: b };
 }

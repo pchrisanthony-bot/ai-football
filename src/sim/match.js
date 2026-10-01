@@ -2,13 +2,13 @@
 // Match: the whole simulation. Pure logic, fixed 120 Hz, no rendering.
 // The renderer and audio read `match` state and drain `match.events`.
 // =====================================================================
-import { SIM_DT, BALL, PLAYER, KICK, RULES, STYLE, DRIB, TOUCH } from '../config.js';
+import { SIM_DT, BALL, PLAYER, KICK, RULES, STYLE, DRIB, TOUCH, RESTART } from '../config.js';
 import { makeBall, stepBall, predictPath } from './ball.js';
 import { makePlayer, movePlayer, separatePlayers, clampToArea } from './players.js';
 import { TEAMS, buildLineup } from './squads.js';
 import { createMatchConfig } from './formats.js';
 import { formationToWorld } from './formations.js';
-import { PITCH, setPitch, inKeeperArea, isCage } from './pitch.js';
+import { PITCH, setPitch, inKeeperArea, isCage, lineCrossing, cornerSpot, goalKickSpot } from './pitch.js';
 import { groundPassSpeed, solveLob, solveStrike, rollTime } from './kicks.js';
 import { clamp, damp, wrapAngle, angleDiff, mulberry32, smooth } from '../util/math.js';
 import { AIDirector } from './ai/director.js';
@@ -27,6 +27,7 @@ const ACTIONS = {
   volley:   { dur: 0.45, contact: 0.08, lock: 0.25 },
   clear:    { dur: 0.45, contact: 0.14, lock: 0.4 },
   throw:    { dur: 0.55, contact: 0.28, lock: 0 },
+  throwin:  { dur: 0.6, contact: 0.3, lock: 0 },
   header:   { dur: 0.45, contact: 0.0, lock: 0.6 },
   tackle:   { dur: 0.45, contact: 0.13, lock: 0.35 },
   slide:    { dur: 0.95, contact: 0.06, lock: 1, ghost: true, selfMove: true },
@@ -47,6 +48,8 @@ const ACTIONS = {
 const cm = v => Math.round(v * 100);
 const byShape = (a, c) => cm(c.form.x) - cm(a.form.x) || cm(Math.abs(a.form.y - 0.5)) - cm(Math.abs(c.form.y - 0.5)) || a.form.y - c.form.y;
 
+const RESTART_STAT = { THROW_IN: 'throwIns', CORNER: 'corners', GOAL_KICK: 'goalKicks' };
+
 export const SKILL_NAMES = { stepover: 'STEPOVER', dragback: 'DRAG BACK', roulette: 'ROULETTE', rainbow: 'RAINBOW FLICK', flickup: 'FLICK UP', panna: 'PANNA!' };
 
 export class Match {
@@ -62,7 +65,7 @@ export class Match {
     const defs = [TEAMS[this.opts.home], TEAMS[this.opts.away]];
     this.teams = defs.map((def, i) => ({
       idx: i, def, dir: i === 0 ? 1 : -1, score: 0, style: 0, gb: 0, gbReady: false, formation: this.cfg.formations[i],
-      stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0 },
+      stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0, corners: 0, throwIns: 0, goalKicks: 0 },
     }));
     this.players = [];
     for (let t = 0; t < 2; t++) buildLineup(defs[t], this.cfg.formations[t]).forEach((L, s) => this.players.push(makePlayer(t, s, L, this.opts.seed)));
@@ -72,7 +75,8 @@ export class Match {
     });
     this.time = 0;
     this.clock = this.opts.seconds;
-    this.phase = 'kickoff';
+    this.phase = 'restart';          // play · restart · goal · fulltime
+    this.restart = null;             // the restart state machine (see beginRestart)
     this.phaseT = 0;
     this.events = [];
     this.goalInfo = null;
@@ -108,7 +112,7 @@ export class Match {
   // the side not kicking off stays outside the centre circle.
   kickoff(team) {
     const b = this.ball;
-    Object.assign(b, makeBall(), { owner: null, inHands: false, passTo: null, flair: null, through: null, wallHits: 0, lastKick: null });
+    Object.assign(b, makeBall(), { owner: null, inHands: false, passTo: null, flair: null, through: null, wallHits: 0, lastKick: null, restartTaker: null });
     const taker = this.kickTaker(team), partner = this.kickPartner(team, taker);
     for (const p of this.players) {
       if (!p.active) continue;
@@ -128,9 +132,8 @@ export class Match {
       p.ai.state = 'IDLE'; p.ai.pending = null;
     }
     this.gainPossession(taker, true);
-    this.phase = 'kickoff';
-    this.phaseT = 1.1;
-    this.kickTeam = team;
+    this.beginRestart('KICKOFF', team, { x: 0, z: 0 });
+    this.restart.taker = taker;
     this.emit({ type: 'kickoff', team });
   }
 
@@ -149,13 +152,7 @@ export class Match {
     this.time += dt;
     for (const t of this.teams) if (t.gb > 0) { t.gb = Math.max(0, t.gb - dt); if (!t.gb) this.emit({ type: 'gbEnd', team: t.idx }); }
 
-    if (this.phase === 'kickoff') {
-      this.phaseT -= dt;
-      for (const p of this.players) { p.move.speed = 0; movePlayer(p, dt, 0); }
-      this.dribble(this.ball.owner, dt);
-      if (this.phaseT <= 0) { this.phase = 'play'; this.emit({ type: 'whistle', kind: 'start' }); }
-      return;
-    }
+    if (this.phase === 'restart') { this.stepRestart(dt); return; }
     if (this.phase === 'fulltime') {
       for (const p of this.players) { p.move.speed = 0; this.updateAction(p, dt); movePlayer(p, dt, 0); }
       if (!this.ball.owner) stepBall(this.ball, dt);
@@ -264,7 +261,10 @@ export class Match {
     const d = p.dribble;
     const ox = b.x, oz = b.z;
     if (b.inHands) {
-      b.x = p.x + fx * 0.32; b.z = p.z + fz * 0.32; b.y = 1.05;
+      // A throw-in is held over the head; a keeper holds it to his chest.
+      const over = this.phase === 'restart' && this.restart.type === 'THROW_IN' || (p.action && p.action.type === 'throwin');
+      const k = over ? -0.06 : 0.32;
+      b.x = p.x + fx * k; b.z = p.z + fz * k; b.y = over ? 2.12 : 1.05;
       b.vx = p.vx; b.vz = p.vz; b.vy = 0;
       return;
     }
@@ -484,8 +484,10 @@ export class Match {
   updateBall(dt) {
     const b = this.ball;
     if (b.owner) {
-      if (b.owner.dribble.mode === 'knock' && !b.inHands) this.knockDribble(b.owner, dt);
-      else this.dribble(b.owner, dt);
+      if (b.owner.dribble.mode === 'knock' && !b.inHands) { this.knockDribble(b.owner, dt); return; }
+      const x0 = b.x, z0 = b.z;
+      this.dribble(b.owner, dt);
+      if (!isCage()) this.carriedOver(x0, z0);
       return;
     }
     const ev = [];
@@ -503,13 +505,32 @@ export class Match {
     if (e.type === 'wall') { b.wallHits++; if (e.speed > 4) b.redirectT = this.time; }
     if (e.type === 'post') b.redirectT = this.time;
     if (e.type === 'post') this.emit({ ...e, type: 'post' });
-    else if (e.type === 'goal') this.onGoal(e);
+    else if (e.type === 'goal') { if (this.phase === 'play') this.onGoal(e); }
+    else if (e.type === 'out') { if (this.phase === 'play') this.onOut(e); }
     else this.emit(e);
+  }
+
+  // A ball at a player's feet (or in his hands) taken over a line: out of play — or a
+  // goal, if it went over the goal line between the posts.
+  carriedOver(x0, z0) {
+    const b = this.ball;
+    if (this.phase !== 'play') return;
+    const c = lineCrossing(x0, z0, b.x, b.z, R);
+    if (!c) return;
+    if (c.line === 'goal' && Math.abs(c.z) < PITCH.goalHalfW && b.y < PITCH.goalH) {
+      b.goal = c.side; b.net = c.side;
+      this.onGoal({ type: 'goal', side: c.side, x: b.x, y: b.y, z: b.z, speed: Math.hypot(b.vx, b.vz) });
+      return;
+    }
+    b.out = true;
+    this.onOut({ type: 'out', line: c.line, side: c.side, x: c.x, z: c.z, y: b.y });
   }
 
   interact() {
     const b = this.ball;
     const bsp = Math.hypot(b.vx, b.vz);
+    // After a restart the taker can't play it again until someone else has touched it.
+    if (b.restartTaker && b.lastTouch !== b.restartTaker) b.restartTaker = null;
     // closest first
     const cands = [];
     for (const p of this.players) {
@@ -519,6 +540,7 @@ export class Match {
     }
     cands.sort((a, c) => a[0] - c[0]);
     for (const [hd, p] of cands) {
+      if (p === b.restartTaker) continue;
       if (b.flair && b.flair.pid !== p.id && b.y > 0.5) continue;
       if (b.through && b.through.pid === p.id) continue;
       const a = p.action;
@@ -688,6 +710,164 @@ export class Match {
     this.kickoff(1 - g.team);
   }
 
+  // ------------------------------------------------------------------ out of play & restarts
+  // One explicit state machine for every restart — KICKOFF · THROW_IN · CORNER · GOAL_KICK:
+  //   DEAD   the ball is out: it runs on (to the boards), players pull up, the call is made
+  //   SETUP  the ball is placed, the taker stands at it, everyone takes his spot
+  //   READY  live the moment the taker plays it (the human's input or the AI's choice)
+  // Who restarts, and from where, comes from the last touch and the pitch; the distance
+  // opponents keep comes from the laws (the pitch's centre-circle radius).
+  onOut(e) {
+    const b = this.ball, lt = b.lastTouch;
+    const last = lt ? lt.team : b.lastKick ? b.lastKick.team : 0;
+    if (e.line === 'touch') {
+      const x = clamp(e.x, -PITCH.halfL + 0.3, PITCH.halfL - 0.3);
+      this.beginRestart('THROW_IN', 1 - last, { x, z: e.side * PITCH.halfW });
+      return;
+    }
+    const defending = this.teams[0].dir === -e.side ? 0 : 1;      // whose goal line it crossed
+    const zs = Math.sign(e.z) || 1;
+    if (last === defending) this.beginRestart('CORNER', 1 - defending, cornerSpot(e.side, zs));
+    else this.beginRestart('GOAL_KICK', defending, goalKickSpot(e.side, zs));
+  }
+
+  beginRestart(type, team, spot) {
+    const b = this.ball;
+    if (b.owner && type !== 'KICKOFF') this.loseBall();
+    b.passTo = null; b.flair = null; b.through = null; b.restartTaker = null;
+    for (const p of this.players) { p.closeControl = false; p.jockey = false; p.cushion = false; p.touchDir = null; }
+    this.restart = { type, team, spot, taker: null, state: type === 'KICKOFF' ? 'SETUP' : 'DEAD', t: 0, readyT: 0, aiAt: 0 };
+    this.phase = 'restart';
+    if (type === 'KICKOFF') return;
+    this.teams[team].stats[RESTART_STAT[type]]++;
+    this.emit({ type: 'whistle', kind: 'out' });
+    this.emit({ type: 'restart', kind: type, team, x: spot.x, z: spot.z });
+  }
+
+  // Who takes it: the keeper takes goal kicks; the best crosser among the wide and
+  // attacking players takes corners; the nearest man (wide players first) throws in.
+  restartTaker(r) {
+    const team = this.teamPlayers(r.team), out = team.filter(p => p.line !== 'GK');
+    const d = p => Math.hypot(p.x - r.spot.x, p.z - r.spot.z);
+    if (r.type === 'GOAL_KICK') return this.keeper(r.team) || out.sort((a, c) => d(a) - d(c))[0];
+    if (r.type === 'CORNER') {
+      const crossers = out.filter(p => p.line !== 'DEF' || p.roleDef.width >= 0.9);
+      return (crossers.length ? crossers : out).sort((a, c) => (c.attrs.pass * 2 + c.attrs.skill) - (a.attrs.pass * 2 + a.attrs.skill) || d(a) - d(c))[0];
+    }
+    return out.sort((a, c) => (d(a) - (a.roleDef.width >= 0.9 ? 6 : 0)) - (d(c) - (c.roleDef.width >= 0.9 ? 6 : 0)))[0];
+  }
+
+  // SETUP: the ball on its spot and the taker at it — a broadcast cut — then the AI puts
+  // everyone on his spot for this set piece.
+  placeRestart() {
+    const r = this.restart, b = this.ball;
+    const taker = r.taker = this.restartTaker(r);
+    const sp = r.spot;
+    // The taker faces into the field: square from the touch line, at the goal from a
+    // corner flag, upfield from a goal kick.
+    const ang = r.type === 'THROW_IN' ? Math.atan2(-Math.sign(sp.z), 0)
+      : r.type === 'CORNER' ? Math.atan2(-sp.z, Math.sign(sp.x) * (PITCH.halfL - PITCH.boxR * 0.6) - sp.x)
+      : Math.atan2(-sp.z * 0.3, -sp.x);
+    const fx = Math.cos(ang), fz = Math.sin(ang);
+    if (r.type === 'THROW_IN') { taker.x = sp.x; taker.z = sp.z + Math.sign(sp.z) * 0.25; }
+    else { taker.x = sp.x - fx * 0.45; taker.z = sp.z - fz * 0.45; }
+    Object.assign(taker, { vx: 0, vz: 0, speed: 0, heading: ang, facing: ang, action: null, stun: 0, noTouch: 0 });
+    Object.assign(b, { x: sp.x, z: sp.z, y: R, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, goal: 0, net: 0, out: false, wallHits: 0, redirectT: 0 });
+    this.gainPossession(taker, true);
+    b.inHands = r.type === 'THROW_IN';
+    b.x = sp.x; b.z = sp.z;
+    r.state = 'SETUP'; r.t = 0;
+    this.ai.planRestart(r);
+    this.keepDistance(r);
+    this.emit({ type: 'restartSet', kind: r.type, team: r.team, x: sp.x, z: sp.z });
+  }
+
+  stepRestart(dt) {
+    const r = this.restart, b = this.ball;
+    r.t += dt;
+    if (r.type === 'KICKOFF') {
+      // Everyone set and still; the whistle goes after a beat and the taker has it.
+      for (const p of this.players) { p.move.speed = 0; movePlayer(p, dt, 0); }
+      this.dribble(b.owner, dt);
+      if (r.t >= RESTART.kickoff) { this.restart = null; this.phase = 'play'; this.emit({ type: 'whistle', kind: 'start' }); }
+      return;
+    }
+    // The clock runs through stoppages (no time-wasting at throw-ins).
+    if (this.opts.mode === 'timed') { this.clock -= dt; if (this.clock <= 0) { this.clock = 0; this.fullTime(); return; } }
+    if (r.state === 'DEAD') for (const p of this.players) { if (!p.human) { p.move.speed = 0; p.sprinting = false; } }
+    else {
+      this.ai.update(dt);
+      if (this.restart !== r) return;          // the AI took it this tick
+    }
+    for (const p of this.players) {
+      if (!p.active) continue;
+      this.updateAction(p, dt);
+      const a = p.action;
+      const lock = a ? ACTIONS[a.type].lock : p === r.taker && r.state !== 'DEAD' ? 0 : 1;
+      if (!(a && ACTIONS[a.type].selfMove)) movePlayer(p, dt, lock);
+      p.steer = null;
+    }
+    separatePlayers(this.players);
+    if (r.state === 'DEAD') {
+      // The dead ball runs on into the run-off (boards); no goals, no new restarts.
+      const ev = [];
+      stepBall(b, dt, ev);
+      for (const e of ev) if (e.type === 'board' || e.type === 'bounce' || e.type === 'net') this.emit(e);
+      if (r.t >= RESTART.dead) this.placeRestart();
+      return;
+    }
+    this.keepDistance(r);
+    this.dribble(b.owner, dt);
+    if (r.state === 'SETUP' && r.t >= RESTART.setup) {
+      r.state = 'READY'; r.readyT = 0;
+      r.aiAt = RESTART.aiThink[0] + this.rand() * (RESTART.aiThink[1] - RESTART.aiThink[0]);
+      this.emit({ type: 'restartReady', kind: r.type, team: r.team, pid: r.taker.id });
+    } else if (r.state === 'READY') {
+      r.readyT += dt;
+      // A human taker gets time to pick his ball; then it's taken for him.
+      if (r.taker.human && r.readyT > RESTART.autoTake) this.ai.decideRestart(r.taker);
+    }
+  }
+
+  // The laws' distances while a restart is set: opponents stand off the ball (2 m at a
+  // throw-in, the centre-circle radius at a corner) and outside the penalty area at a
+  // goal kick. Applies to the human's man too.
+  keepDistance(r) {
+    const gx = this.ownGoalX(r.team), s = Math.sign(gx), ka = PITCH.keeperArea;
+    const dist = r.type === 'THROW_IN' ? RESTART.throwDist : PITCH.centreR;
+    for (const p of this.players) {
+      if (!p.active || p.team === r.team) continue;
+      if (r.type === 'GOAL_KICK') {
+        if (!inKeeperArea(p.x, p.z, gx, 0.6)) continue;
+        if (ka.kind === 'arc') { const dx = p.x - gx, dz = p.z, d = Math.hypot(dx, dz) || 1, k = (ka.radius + 0.6) / d; p.x = gx + dx * k; p.z = dz * k; }
+        else {
+          const inX = ka.depth + 0.6 - (gx - p.x) * s, inZ = ka.width / 2 + 0.6 - Math.abs(p.z);
+          if (inX < inZ) p.x -= s * inX; else p.z = Math.sign(p.z || 1) * (ka.width / 2 + 0.6);
+        }
+        continue;
+      }
+      const dx = p.x - r.spot.x, dz = p.z - r.spot.z, d = Math.hypot(dx, dz);
+      if (d < dist) { const k = dist / (d || 1); p.x = r.spot.x + (d ? dx * k : -s * dist); p.z = r.spot.z + dz * k; }
+    }
+  }
+
+  // The taker plays it: the ball is live, and he can't touch it again until someone else has.
+  // kind: 'throwin' at a throw-in, else a kick ('pass' / 'lob' / 'clear').
+  takeRestart(p, kind, params = {}) {
+    const r = this.restart;
+    if (this.phase !== 'restart' || !r || r.state !== 'READY' || p !== r.taker || p.action) return false;
+    this.restart = null; this.phase = 'play';
+    let ok;
+    if (r.type === 'THROW_IN') {
+      const target = params.receiver ? this.leadTarget(p, params.receiver, false) : params.target;
+      this.startAction(p, 'throwin', { target, receiver: params.receiver || null });
+      ok = true;
+    } else ok = this.requestKick(p, kind, params);
+    if (!ok) { this.restart = r; this.phase = 'restart'; return false; }
+    this.ball.restartTaker = p;
+    return true;
+  }
+
   // ------------------------------------------------------------------ style & GAMEBREAKER
   // Style fills the meter; a full meter is a GAMEBREAKER in the bank. Like FIFA
   // Street, the player chooses the moment to fire it (activateGB) — it never
@@ -723,7 +903,7 @@ export class Match {
       const extra = gap > 0 ? clamp(gap / Math.max(1.5, p.speed - along + 1.5), 0, 0.35) : 0;
       p.action.contact += extra; p.action.dur += extra;
     }
-    if (['pass', 'through', 'lob', 'shot', 'volley', 'clear', 'throw'].includes(type)) this.emit({ type: 'windup', pid: p.id, kind: type });
+    if (['pass', 'through', 'lob', 'shot', 'volley', 'clear', 'throw', 'throwin'].includes(type)) this.emit({ type: 'windup', pid: p.id, kind: type });
     return p.action;
   }
 
@@ -777,7 +957,7 @@ export class Match {
 
   fireAction(p, a) {
     switch (a.type) {
-      case 'pass': case 'through': case 'lob': case 'shot': case 'volley': case 'clear': case 'throw':
+      case 'pass': case 'through': case 'lob': case 'shot': case 'volley': case 'clear': case 'throw': case 'throwin':
         return this.fireKick(p, a);
       case 'tackle': return this.fireTackle(p, a);
       case 'stepover': return this.fireStepover(p, a);
@@ -824,6 +1004,13 @@ export class Match {
       const vx = v.vx * c - v.vz * s, vz = v.vx * s + v.vz * c;
       v.vx = vx; v.vz = vz; v.vy += noise(e * 12) + (manual ? 0 : Math.max(0, a.aim.power - 0.92) * 3);
       T.stats.shots++; p.st.sh++;
+    } else if (a.type === 'throwin') {
+      // Both hands, from over the head: it loops, and only goes so far.
+      b.y = 2.12;
+      const L = solveLob(b.x, b.y, b.z, a.target.x, a.target.z, KICK.throwElev, 0);
+      const k = Math.min(1, KICK.throwMax / Math.hypot(L.vx, L.vy, L.vz));
+      v = { vx: L.vx * k, vy: L.vy * k, vz: L.vz * k, wy: 0 };
+      T.stats.passes++;
     } else if (a.type === 'throw') {
       const d = Math.hypot(a.target.x - b.x, a.target.z - b.z) || 1;
       const s = groundPassSpeed(d, 5);
@@ -1100,6 +1287,7 @@ export class Match {
     if (!this.canAct(p) || this.phase !== 'play') return false;
     const b = this.ball;
     const mine = b.owner === p;
+    if (!mine && b.restartTaker === p) return false;
     if (!mine && !this.ballReachableSoon(p, type === 'volley' ? 1.6 : 1.0)) return false;
     if (b.inHands && mine) { type = type === 'shot' ? 'clear' : type === 'lob' ? 'clear' : 'throw'; }
     if (type === 'clear' && !params.target) params.target = { x: this.oppGoalX(p.team) * 0.4, z: (this.rand() - 0.5) * 10 };

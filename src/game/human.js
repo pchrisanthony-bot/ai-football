@@ -2,6 +2,7 @@
 // Context-sensitive like FIFA: J passes with the ball, switches player without it.
 import { KICK, SWITCH } from '../config.js';
 import { maxSpeed } from '../sim/players.js';
+import { clampToField } from '../sim/pitch.js';
 import { clamp, rotateTowards } from '../util/math.js';
 
 export class HumanController {
@@ -33,7 +34,7 @@ export class HumanController {
   update(dt) {
     const m = this.m, inp = this.in, b = m.ball;
     this.switchCD = Math.max(0, this.switchCD - dt);
-    if (m.phase !== 'play' && m.phase !== 'kickoff') { this.charge = null; return; }
+    if (m.phase !== 'play' && m.phase !== 'restart') { this.charge = null; return; }
     this.autoSwitch();
     const p = this.p;
     if (!p || !p.active) { this.setHuman(this.pickStart()); return; }
@@ -45,8 +46,9 @@ export class HumanController {
     p.sprinting = sprint;
     p.wantShoot = inp.down('shoot');
 
-    // ---- movement
-    if (m.phase === 'kickoff') { p.move.speed = 0; }
+    // ---- movement (at a restart: still until it's set, and the taker stays at the ball)
+    const r = m.phase === 'restart' ? m.restart : null;
+    if (r && (r.state !== 'READY' || r.type === 'KICKOFF' || p === r.taker)) { p.move.speed = 0; }
     else {
       const sp = maxSpeed(p, sprint) * (mine ? 0.94 : 1) * (this.charge ? 0.8 : 1);
       p.move.x = st.x; p.move.z = st.z; p.move.speed = hasStick ? sp * Math.min(1, Math.hypot(st.x, st.z) * 1.2) : 0;
@@ -59,6 +61,7 @@ export class HumanController {
     p.faceTarget = p.jockey ? { x: b.x, z: b.z } : null;
     if (p.jockey) p.move.speed *= 0.7;
 
+    if (r) { if (p === r.taker && r.state === 'READY') this.restartInput(dt, st, hasStick); return; }
     if (m.phase !== 'play') return;
     if (inp.pressed('gamebreaker')) m.activateGB(this.team);   // G / L3·R3 / the GB button
     const canUseBall = mine || (!b.owner && m.ballReachableSoon(p, 1.6));
@@ -111,6 +114,26 @@ export class HumanController {
       // Panna: hold Street Ball Control, tap sprint toward a defender (touch: long-press SKILL).
       if ((ctl && inp.pressed('sprint')) || inp.pressed('panna')) m.requestSkill(p, 'panna');
     }
+  }
+
+  // Taking a set piece: aim with the stick, hold for power, release to play it.
+  //   PASS = short (a throw / a pass) · THROUGH, LOB or SHOOT = long (a long throw, a
+  //   cross, a long ball). Toward a team-mate in the stick's direction, else into space.
+  restartInput(dt, st, hasStick) {
+    const m = this.m, inp = this.in, p = this.p, r = m.restart;
+    for (const kind of ['pass', 'through', 'lob', 'shoot']) if (inp.pressed(kind) && !this.charge) this.charge = { kind, t: 0 };
+    if (!this.charge) return;
+    this.charge.t += dt;
+    if (!inp.released(this.charge.kind)) return;
+    const long = this.charge.kind !== 'pass', power = clamp(this.charge.t / KICK.chargeTime, 0.05, 1);
+    this.charge = null;
+    const to = m.pickReceiver(p, st.x, st.z, long ? 'lob' : 'pass');
+    const ang = hasStick ? Math.atan2(st.z, st.x) : p.facing;
+    const dist = long ? 16 + 22 * power : 7 + 8 * power;
+    const target = to ? { x: to.x, z: to.z } : clampToField(p.x + Math.cos(ang) * dist, p.z + Math.sin(ang) * dist, 1);
+    if (r.type === 'THROW_IN') m.takeRestart(p, 'throwin', to ? { receiver: to } : { target });
+    else if (long) m.takeRestart(p, 'lob', { target, receiver: to });
+    else m.takeRestart(p, 'pass', to ? { receiver: to, power } : { target, power });
   }
 
   // gesture: how a touch button was released, e.g. SHOOT swiped 'up' = chip, 'down' = curl.
@@ -186,6 +209,7 @@ export class HumanController {
     if (this.charge) return;
     const o = b.owner;
     if (o && o.team === this.team && o !== cur && o.line !== 'GK') { this.setHuman(o); return; }
+    if (m.phase === 'restart' && m.restart.state !== 'READY') return;   // no switching while a restart is set up
     if (b.passTo && b.passTo.team === this.team && b.passTo !== cur && b.passTo.line !== 'GK') { this.setHuman(b.passTo); return; }
     if (o && o.team === this.team) return;
     // Defending or loose: follow the best-placed man, with hysteresis — readily right

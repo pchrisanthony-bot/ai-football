@@ -30,14 +30,18 @@ export class CameraRig {
     }
   }
 
+  // Where the broadcast camera looks for play around (x, z).
+  framing(x, z) { return { x: clamp(x, -PITCH.halfL + 6, PITCH.halfL - 6), y: 0, z: clamp(z * 0.55, -3, 2.5) }; }
+
+  // A broadcast cut (a set piece being placed): straight to the new framing.
+  cut(x, z) { const f = this.framing(x, z); this.focus.set(f.x, f.y, f.z); this.fVel.set(0, 0, 0); }
+
   // ball + controlled player → framing
   broadcast(dt, ball, human, spread) {
     const lead = 0.35;
     let tx = ball.x + ball.vx * lead, tz = ball.z + ball.vz * lead * 0.5;
     if (human) { tx = tx * 0.75 + human.x * 0.25; tz = tz * 0.75 + human.z * 0.25; }
-    tx = clamp(tx, -PITCH.halfL + 6, PITCH.halfL - 6);
-    tz = clamp(tz * 0.55, -3, 2.5);
-    this.follow({ x: tx, y: 0, z: tz }, 3.2, dt);
+    this.follow(this.framing(tx, tz), 3.2, dt);
     // Zoom: tighter near the goals and when play is compact.
     const nearGoal = clamp((Math.abs(this.focus.x) - 8) / 6, 0, 1);
     // Narrow screens need to sit further back to keep the full width in frame.

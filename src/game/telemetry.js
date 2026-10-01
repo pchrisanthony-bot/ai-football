@@ -24,7 +24,7 @@ export function makeTelemetry(getMatch, rig) {
       camera: rig ? { dist: +rig.dist.toFixed(1) } : null,
       ai: m.ai.ranges ? m.ai.ranges() : null,
       phase: m.phase,
-      restart: m.restart ? m.restart.type : null,
+      restart: m.phase === 'restart' && m.restart ? `${m.restart.type} ${m.restart.state}` : null,
     };
   };
 }

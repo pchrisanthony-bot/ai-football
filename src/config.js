@@ -121,11 +121,25 @@ export const KICK = {
   finessePower: 0.85,     // finesse trades pace for curl
   lobSpeed: 13,
   lobUp: 0.55,            // vertical fraction of lob velocity
+  throwMax: 16,           // m/s: a long throw-in (≈ 25 m)
+  throwElev: 0.32,        // throw-ins loop from over the head
 };
 
 export const RULES = {
   matchSeconds: 180,
   firstTo: 5,
+};
+
+// Restarts on open pitches (seconds). The ball is dead for a beat while it runs on and
+// the restart is given, the set-up lets players take their spots, and a human taker
+// gets a while to choose before it's taken for him.
+export const RESTART = {
+  dead: 0.7,
+  setup: 0.8,
+  kickoff: 1.1,           // the kick-off freeze before the whistle
+  aiThink: [0.35, 1.0],   // an AI taker's pause before he plays it
+  autoTake: 8,
+  throwDist: 2,           // m opponents keep from a throw-in (the laws)
 };
 
 // Player switching (seconds: time to win the ball, so it scales with any pitch).

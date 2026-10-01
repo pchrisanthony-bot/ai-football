@@ -8,6 +8,7 @@ import { PITCH } from '../sim/pitch.js';
 import { radialTexture } from './textures.js';
 
 const REPLAY_SECS = 7;
+const RESTART_LABEL = { THROW_IN: 'THROW-IN', CORNER: 'CORNER', GOAL_KICK: 'GOAL KICK' };
 
 export class MatchView {
   constructor(ctx, match) {
@@ -219,6 +220,13 @@ export class MatchView {
         case 'gbReady': audio.gbReady(); hud.notify(m.opts.humanTeam === e.team ? 'GAMEBREAKER READY' : 'THEY HAVE A GAMEBREAKER', 'alert', { color: '#FFD400' }); break;
         case 'gbStrike': audio.gbStrike(); rig.shake(0.2, 0.5); break;
         case 'whistle': audio.whistle(e.kind === 'end'); break;
+        case 'board': audio.fence(e.speed, true); break;
+        case 'restart': {
+          const T = m.teams[e.team], mine = m.opts.humanTeam === e.team && e.kind !== 'GOAL_KICK';
+          hud.notify(RESTART_LABEL[e.kind], 'restart', { color: T.def.kit.shirt, sub: mine ? 'AIM · PASS SHORT · LOB LONG' : T.def.name });
+          break;
+        }
+        case 'restartSet': rig.cut(e.x, e.z); break;
         case 'goal': {
           audio.goal();
           venue.react?.('goal', m.teams[e.team].def.kit.shirt);

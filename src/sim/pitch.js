@@ -84,9 +84,9 @@ export function buildPitch(spec, id = spec.id || 'custom') {
     centreR: spec.centreRadius,
     cornerArc: spec.cornerArc ?? 0,
     runoff: spec.boundary === 'open' ? (spec.runoff ?? 4) : 0,
-    // cage-only
+    // cage: fence, kick-boards and roof; open: the advertising boards round the run-off
     wallH: spec.cage?.wallHeight ?? 0,
-    boardH: spec.cage?.boardHeight ?? 0,
+    boardH: spec.cage?.boardHeight ?? spec.boardHeight ?? 0.9,
     roofH: spec.cage?.roofHeight ?? Infinity,
     // derived scale: 1 on the 32 m cage; used to size things that grow with the pitch
     scale: length / 32,
@@ -118,6 +118,40 @@ export function inKeeperArea(x, z, goalX, margin = 0) {
 export function clampToField(x, z, inset = 0.5) {
   const lx = PITCH.halfL - inset, lz = PITCH.halfW - inset;
   return { x: Math.max(-lx, Math.min(lx, x)), z: Math.max(-lz, Math.min(lz, z)) };
+}
+
+// Out of play (Law 9): the WHOLE ball over a touch line or goal line. Swept: the first
+// line a ball of radius r crosses moving from (x0,z0) to (x1,z1), however fast, as
+// { line: 'touch'|'goal', side: ±1, x, z (where it crossed), t (0..1 along the move) },
+// or null. A ball already beyond a line doesn't cross it again.
+export function lineCrossing(x0, z0, x1, z1, r) {
+  const lx = PITCH.halfL + r, lz = PITCH.halfW + r;
+  let hit = null;
+  for (const s of [-1, 1]) {
+    const a0 = z0 * s, a1 = z1 * s;
+    if (a0 <= lz && a1 > lz) {
+      const t = (lz - a0) / (a1 - a0);
+      if (!hit || t < hit.t) hit = { line: 'touch', side: s, t, x: x0 + (x1 - x0) * t, z: s * PITCH.halfW };
+    }
+    const c0 = x0 * s, c1 = x1 * s;
+    if (c0 <= lx && c1 > lx) {
+      const t = (lx - c0) / (c1 - c0);
+      if (!hit || t < hit.t) hit = { line: 'goal', side: s, t, x: s * PITCH.halfL, z: z0 + (z1 - z0) * t };
+    }
+  }
+  return hit;
+}
+
+// Set-piece spots. side: the goal line's end (±1); zs: which half of it (±1).
+export function cornerSpot(side, zs) {
+  const a = Math.max(0.3, PITCH.cornerArc * 0.6);
+  return { x: side * (PITCH.halfL - a), z: zs * (PITCH.halfW - a) };
+}
+// Goal kick: from the goal area on the side the ball went out (a pitch without a goal
+// area takes it from inside the penalty area).
+export function goalKickSpot(side, zs) {
+  const ga = PITCH.goalArea || { depth: PITCH.boxR * 0.5, width: PITCH.keeperArea.width * 0.5 };
+  return { x: side * (PITCH.halfL - ga.depth * 0.8), z: zs * Math.max(0, ga.width / 2 - 1.5) };
 }
 
 setPitch('cage5');
