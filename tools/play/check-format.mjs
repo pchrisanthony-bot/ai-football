@@ -1,12 +1,13 @@
 // Visual check of a format in the real game, frame-accurate: the line-ups screen, the
 // kick-off shape and a few seconds of AI play (spectating), with positions logged.
-//   node tools/play/check-format.mjs [--format=N] [--venue=N] [--label=name]
+//   node tools/play/check-format.mjs [--format=N] [--venue=N] [--gfx=N] [--label=name]
 import { harness } from './harness.mjs';
 
 const arg = (k, d) => { const a = process.argv.find(x => x.startsWith(`--${k}=`)); return a ? a.split('=')[1] : d; };
 const label = arg('label', 'format');
 const settings = { VENUE: +arg('venue', 0) };
 if (arg('format', null) != null) settings.FORMAT = +arg('format');
+if (arg('gfx', null) != null) settings.GRAPHICS = +arg('gfx');
 
 const H = await harness({ w: +arg('w', 1280), h: +arg('h', 720) });
 // Line-ups: open the setup, apply the settings, go to the line-ups screen.

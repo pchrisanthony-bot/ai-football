@@ -1,66 +1,63 @@
 // An open grass pitch, drawn from the live PITCH: tiled turf with mown stripes (in the
-// shader, so it's crisp at any size) and the markings as flat geometry — touch and goal
-// lines, halfway line, centre circle and spot, penalty and goal areas, penalty spots and
-// arcs, corner arcs. Everything comes from the pitch data; nothing is drawn per format.
+// shader, so it's crisp at any size) and the markings — touch and goal lines, halfway
+// line, centre circle and spot, penalty and goal areas, penalty spots and arcs, corner
+// arcs. Everything comes from the pitch data; nothing is drawn per format.
 import * as THREE from 'three';
 import { PITCH } from '../sim/pitch.js';
 import { grassTile } from './textures.js';
 
 const LINE = 0.12;   // m: line width (Law 1: no more than 12 cm)
+const MARGIN = 1;    // m of canvas round the field (the boundary lines' outer edge is the field's edge)
 
-// Flat quads for every marking, merged into one geometry (one draw call).
-function markingGeometry() {
-  const P = PITCH, pos = [], idx = [];
-  const quad = (ax, az, bx, bz, w = LINE) => {
-    const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz) || 1, nx = -dz / l * w / 2, nz = dx / l * w / 2, i = pos.length / 3;
-    pos.push(ax + nx, 0, az + nz, ax - nx, 0, az - nz, bx - nx, 0, bz - nz, bx + nx, 0, bz + nz);
-    idx.push(i, i + 2, i + 1, i, i + 3, i + 2);   // wound to face up (+y)
-  };
-  // Lines are drawn inside the field: the outer edge of a boundary line is the boundary.
+// The markings painted onto a transparent canvas laid over the turf. A mipmapped texture
+// (rather than geometry) keeps 12 cm lines smooth far down the pitch: they fade with
+// distance instead of breaking up into dashes when they're narrower than a pixel.
+function markingTexture(maxAniso) {
+  const P = PITCH;
+  const PPM = Math.min(24, Math.floor(2048 / (P.length + 2 * MARGIN)));   // ≥ 19 px/m on a full pitch
+  const c = document.createElement('canvas');
+  c.width = Math.round((P.length + 2 * MARGIN) * PPM); c.height = Math.round((P.width + 2 * MARGIN) * PPM);
+  const g = c.getContext('2d');
+  const X = x => (x + P.halfL + MARGIN) * PPM, Z = z => (z + P.halfW + MARGIN) * PPM;
+  g.strokeStyle = '#fff'; g.fillStyle = '#fff'; g.lineWidth = LINE * PPM;
+  const line = (ax, az, bx, bz) => { g.beginPath(); g.moveTo(X(ax), Z(az)); g.lineTo(X(bx), Z(bz)); g.stroke(); };
+  const arc = (cx, cz, r, a0, a1) => { g.beginPath(); g.arc(X(cx), Z(cz), r * PPM, a0, a1); g.stroke(); };
+  const spot = (x, z) => { g.beginPath(); g.arc(X(x), Z(z), 0.11 * PPM, 0, Math.PI * 2); g.fill(); };
+  // Lines sit inside the field: the outer edge of a boundary line is the boundary.
   const L = P.halfL - LINE / 2, W = P.halfW - LINE / 2;
-  const line = (ax, az, bx, bz) => quad(ax, az, bx, bz);
-  const arc = (cx, cz, r, a0, a1, keep = () => true) => {
-    const n = Math.max(8, Math.ceil(r * Math.abs(a1 - a0) * 3));
-    for (let i = 0; i < n; i++) {
-      const t0 = a0 + (a1 - a0) * i / n, t1 = a0 + (a1 - a0) * (i + 1) / n;
-      const x0 = cx + Math.cos(t0) * r, z0 = cz + Math.sin(t0) * r, x1 = cx + Math.cos(t1) * r, z1 = cz + Math.sin(t1) * r;
-      if (keep((x0 + x1) / 2, (z0 + z1) / 2)) line(x0, z0, x1, z1);
-    }
-  };
-  const spot = (x, z, r = 0.22) => quad(x - r / 2, z, x + r / 2, z, r);
-  // boundary, halfway line, centre
-  line(-L, -W, L, -W); line(-L, W, L, W); line(-L, -W, -L, W); line(L, -W, L, W);
+  line(-L, -W, L, -W); line(L, -W, L, W); line(L, W, -L, W); line(-L, W, -L, -W);
   line(0, -W, 0, W);
   arc(0, 0, P.centreR, 0, Math.PI * 2);
   spot(0, 0);
   for (const s of [-1, 1]) {
-    const gx = s * L;
-    const ka = P.keeperArea;
+    const gx = s * L, ka = P.keeperArea;
     if (ka.kind === 'rect') {
       const bx = gx - s * ka.depth, hw = ka.width / 2;
-      line(gx, -hw, bx, -hw); line(gx, hw, bx, hw); line(bx, -hw, bx, hw);
+      line(gx, -hw, bx, -hw); line(bx, -hw, bx, hw); line(bx, hw, gx, hw);
     }
     if (P.goalArea) {
       const ax = gx - s * P.goalArea.depth, hw = P.goalArea.width / 2;
-      line(gx, -hw, ax, -hw); line(gx, hw, ax, hw); line(ax, -hw, ax, hw);
+      line(gx, -hw, ax, -hw); line(ax, -hw, ax, hw); line(ax, hw, gx, hw);
     }
     if (P.penaltySpot) {
       const px = s * (P.halfL - P.penaltySpot);
       spot(px, 0);
-      // The arc ("D") outside the area: the centre-circle radius round the spot.
-      if (ka.kind === 'rect') arc(px, 0, P.centreR, 0, Math.PI * 2, (x) => (s * x) < P.halfL - ka.depth);
+      // The arc (the "D") outside the area: the centre-circle radius round the spot.
+      if (ka.kind === 'rect' && P.centreR > ka.depth - P.penaltySpot) {
+        const a = Math.acos((ka.depth - P.penaltySpot) / P.centreR), base = s > 0 ? Math.PI : 0;
+        arc(px, 0, P.centreR, base - a, base + a);
+      }
     }
-    // corner arcs
+    // corner arcs, into the field
     if (P.cornerArc) for (const zs of [-1, 1]) {
-      const a = Math.atan2(-zs, -s);
-      arc(gx, zs * W, P.cornerArc, a - Math.PI / 4, a + Math.PI / 4);
+      const mid = Math.atan2(-zs, -s);
+      arc(gx, zs * W, P.cornerArc, mid - Math.PI / 4, mid + Math.PI / 4);
     }
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = maxAniso;
+  return t;
 }
 
 // The turf (pitch + run-off) and its markings. Returns { group, setWet }.
@@ -97,9 +94,9 @@ export function buildOpenPitch(maxAniso) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(fullL, fullW), turf);
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
   group.add(ground);
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xd6d6d0, roughness: 0.8, emissive: 0x000000, polygonOffset: true, polygonOffsetFactor: -2 });
-  const lines = new THREE.Mesh(markingGeometry(), lineMat);
-  lines.position.y = 0.004; lines.receiveShadow = true;
+  const lineMat = new THREE.MeshStandardMaterial({ map: markingTexture(maxAniso), color: 0xd6d6d0, roughness: 0.8, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+  const lines = new THREE.Mesh(new THREE.PlaneGeometry(P.length + 2 * MARGIN, P.width + 2 * MARGIN), lineMat);
+  lines.rotation.x = -Math.PI / 2; lines.position.y = 0.004; lines.receiveShadow = true;
   group.add(lines);
   // Rain: the grass goes glossy and darker so the floodlights streak on it.
   const setWet = on => { turf.roughness = on ? 0.5 : 0.95; turf.color.setScalar(on ? 0.82 : 1); lineMat.roughness = on ? 0.35 : 0.7; };
