@@ -23,7 +23,57 @@ const isolate = (H, o = {}) => H.eval((o) => {
 }, o);
 const tel = H => H.eval(() => { const t = __telemetry(); return { speed: t.player.speed, mode: t.player.mode, gap: t.gap, ball: t.ball.speed, owner: t.ball.owner, ft: t.firstTouch }; });
 
+// Send the loose ball over a line off a given side, then step until the restart is ready.
+const outOff = async (H, { x, z, vx = 0, vz = 0, team }) => {
+  await H.eval(({ x, z, vx, vz, team }) => {
+    const m = __G.match, P = m.ball;
+    m.phase = 'play'; m.restart = null; m.loseBall();
+    Object.assign(P, { x, z, y: 0.11, vx, vy: 0, vz, wx: 0, wy: 0, wz: 0, out: false, net: 0, goal: 0 });
+    P.lastTouch = m.players.find(q => q.team === team && q.line !== 'GK');
+    for (const q of m.players) if (Math.hypot(q.x - x, q.z - z) < 8) q.x -= Math.sign(x || 1) * 10;
+  }, { x, z, vx, vz, team });
+  for (let i = 0; i < 40; i++) { await H.step(6); if (await H.eval(() => __G.match.restart?.state === 'READY')) break; }
+  return H.eval(() => { const m = __G.match, r = m.restart; return r ? { type: r.type, team: r.team, taker: r.taker.name, human: m.human?.name, spot: [+r.spot.x.toFixed(1), +r.spot.z.toFixed(1)] } : { phase: m.phase }; });
+};
+const pitch = H => H.eval(() => { const m = __G.match; return { L: m.oppGoalX(0), W: m.ball && window.__telemetry().pitch.width / 2 }; });
+
 const SCENARIOS = {
+  // Open pitch: a throw-in to us — the human throws it to the man the stick points at.
+  async 'throw-in'(H) {
+    const { L, W } = await pitch(H);
+    const set = await outOff(H, { x: L * 0.2, z: W - 1, vz: 6, team: 1 });
+    await H.shot('throw-in-ready');
+    const aim = await H.eval(() => { const m = __G.match, p = m.human; const q = m.players.filter(o => o.team === p.team && o !== p && o.line !== 'GK').sort((a, c) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(c.x - p.x, c.z - p.z))[0]; return { to: q.name, dx: q.x - p.x, dz: q.z - p.z }; });
+    // stick toward him (screen: right = +x, up = −z), PASS tapped
+    const keys = []; if (aim.dx > 2) keys.push('KeyD'); if (aim.dx < -2) keys.push('KeyA'); if (aim.dz < -2) keys.push('KeyW'); if (aim.dz > 2) keys.push('KeyS');
+    await H.down(...keys); await H.tap('KeyJ', 5); await H.up(...keys);
+    await H.step(20); await H.shot('throw-in-thrown');
+    await H.step(40);
+    const after = await H.eval(() => { const m = __G.match, b = m.ball; return { phase: m.phase, lastKick: b.lastKick?.kind, owner: b.owner?.name, lastTouch: b.lastTouch?.name }; });
+    return { set, aim, after };
+  },
+  // Open pitch: our corner — the human crosses it (LOB) into the box.
+  async corner(H) {
+    const { L, W } = await pitch(H);
+    const set = await outOff(H, { x: L - 2, z: 12, vx: 7, team: 1 });
+    await H.shot('corner-ready');
+    const box = await H.eval(() => { const m = __G.match, gx = m.oppGoalX(0); return m.players.filter(p => p.team === 0 && Math.abs(p.x - gx) < 17).map(p => p.name); });
+    await H.down('KeyA', 'KeyS'); await H.tap('KeyI', 14); await H.up('KeyA', 'KeyS');
+    await H.film('corner-cross', 60, 3);
+    const after = await H.eval(() => { const m = __G.match, b = m.ball; return { phase: m.phase, lastKick: b.lastKick?.kind, owner: b.owner?.name, lastTouch: b.lastTouch?.name, ballY: +b.y.toFixed(2) }; });
+    return { set, inTheBox: box, after };
+  },
+  // Open pitch: a goal kick to them — their keeper takes it, we stay out of the area.
+  async 'goal-kick'(H) {
+    const { L } = await pitch(H);
+    const set = await outOff(H, { x: L - 2, z: -6, vx: 8, team: 0 });
+    await H.shot('goal-kick-ready');
+    const inArea = await H.eval(() => { const m = __G.match, gx = m.oppGoalX(0), box = __telemetry().pitch.box; return m.players.filter(p => p.team === 0 && Math.abs(p.x - gx) < box.depth && Math.abs(p.z) < box.width / 2).length; });
+    await H.step(150);
+    await H.shot('goal-kick-taken');
+    const after = await H.eval(() => { const m = __G.match, b = m.ball; return { phase: m.phase, lastKick: b.lastKick?.kind, lastTouch: b.lastTouch?.name }; });
+    return { set, opponentsInArea: inArea, after };
+  },
   // P2: notices sit in the top band, not over play — a real parry, then KICK OFF + GAMEBREAKER
   async notices(H) {
     await H.step(30);

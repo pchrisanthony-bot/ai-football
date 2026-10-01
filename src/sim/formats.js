@@ -24,7 +24,7 @@ const CAGE_CAM = {
 const OPEN_CAM = {
   ...CAGE_CAM,
   lead: 0.45, humanBias: 0.2, omega: 2.6,
-  edge: 9, zFollow: 0.85, zRange: [-0.8, 0.62],
+  edge: 9, zFollow: 0.85, zRange: [-0.8, 0.85],
   spreadK: 0.16, goalZoom: 3, goalBand: [14, 10],
   rise: 0.56, lift: 2,
   gantry: 1, zCam: 0.25, back: 0.55, backOff: 2,

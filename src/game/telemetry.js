@@ -16,7 +16,7 @@ export function makeTelemetry(getMatch, rig) {
     const ft = m.lastFirstTouch;
     return {
       format: m.cfg.format, teamSize: m.cfg.teamSize, formations: m.teams.map(t => t.formation),
-      pitch: { id: PITCH.id, length: PITCH.length, width: PITCH.width, boundary: PITCH.boundary },
+      pitch: { id: PITCH.id, length: PITCH.length, width: PITCH.width, boundary: PITCH.boundary, box: PITCH.keeperArea },
       player: p ? { name: p.name, role: p.role, line: p.line, speed: +p.speed.toFixed(2), accel: +accel.toFixed(1), mode: p.dribble?.mode } : null,
       ball: { speed: +Math.hypot(b.vx, b.vy, b.vz).toFixed(2), v: [+b.vx.toFixed(2), +b.vy.toFixed(2), +b.vz.toFixed(2)], owner: b.owner ? b.owner.name : null, lastTouch: b.lastTouch ? `${b.lastTouch.name} (${m.teams[b.lastTouch.team].def.short})` : null },
       gap: p ? +Math.hypot(b.x - p.x, b.z - p.z).toFixed(2) : null,

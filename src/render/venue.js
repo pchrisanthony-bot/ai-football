@@ -1,5 +1,6 @@
 // The venue: a floodlit rooftop cage at night, city all around.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PITCH } from '../sim/pitch.js';
 import { courtTextures, chainLink, netTexture, graffitiBoard, concreteTexture, radialTexture, bannerTexture, sprayTag, turfTextures, adBoard } from './textures.js';
 import { buildStands, towerHead } from './stadium.js';
@@ -128,7 +129,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     glow.scale.setScalar((arena ? 8 : 5) * Math.sqrt(k)); glow.position.set(bx - sx * 0.3, top, bz - sz * 0.3);
     scene.add(glow);
 
-    const spot = new THREE.SpotLight(0xfff1dc, (arena ? 3600 : 1500) * k * k, 0, 0.78, 0.6, 2);
+    const spot = new THREE.SpotLight(0xfff1dc, (arena ? 3600 : 1500) * Math.pow(k, 1.7), 0, 0.78, 0.6, 2);
     spot.position.set(bx, top, bz);
     spot.target.position.copy(aim);
     spot.castShadow = true;
@@ -146,12 +147,12 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     coneGeo.translate(0, -coneLen / 2, 0);
     const coneMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false,
-      uniforms: { uLen: { value: coneLen } },
+      uniforms: { uLen: { value: coneLen }, uK: { value: 1 / (k * k) } },   // a bigger cone is a thinner haze
       vertexShader: `varying float vY; varying vec3 vN; varying vec3 vV;
         void main(){ vY = position.y; vN = normalize(normalMatrix * normal); vec4 mv = modelViewMatrix * vec4(position,1.0); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
-      fragmentShader: `uniform float uLen; varying float vY; varying vec3 vN; varying vec3 vV;
+      fragmentShader: `uniform float uLen; uniform float uK; varying float vY; varying vec3 vN; varying vec3 vV;
         void main(){ float along = clamp(-vY / uLen, 0.0, 1.0); float rim = pow(abs(dot(vN, vV)), 1.5);
-          float a = (1.0 - along) * (1.0 - along) * rim * 0.035; gl_FragColor = vec4(vec3(1.0, 0.93, 0.8) * a, 1.0); }`,
+          float a = (1.0 - along) * (1.0 - along) * rim * 0.035 * uK; gl_FragColor = vec4(vec3(1.0, 0.93, 0.8) * a, 1.0); }`,
     });
     const cone = new THREE.Mesh(coneGeo, coneMat);
     cone.position.set(bx, top, bz);
@@ -215,22 +216,35 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
 
 
   // ---------------------------------------------------------------- boards
-  const boardMatFor = (seed, len, near) => {
+  // Each board is its two artwork faces in one mesh (one draw call); the top trims of
+  // every board (the reactive light strip) and their end caps are merged into one mesh
+  // each when the boards are done (finishBoards). Measured: a board as a 6-material box
+  // was 6 draw calls, and submission cost is what limits a slow CPU.
+  const trimMat = venue.trimMat = new THREE.MeshStandardMaterial({ color: 0xffd400, emissive: 0x332a00 });
+  const capMat = new THREE.MeshStandardMaterial({ color: 0x15161b });
+  const trims = [], caps = [];
+  const addBoard = (len, x, z, rotY, seed, near) => {
     const t = arena ? adBoard(seed, len) : graffitiBoard(seed, len);
     t.anisotropy = maxAniso;
-    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.65, metalness: 0.1, transparent: near, opacity: near ? 0.35 : 1, depthWrite: !near });
-  };
-  const trimMat = venue.trimMat = new THREE.MeshStandardMaterial({ color: 0xffd400, emissive: 0x332a00 });
-  const addBoard = (len, x, z, rotY, seed, near) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(len, boardH, 0.08), [
-      new THREE.MeshStandardMaterial({ color: 0x15161b }), new THREE.MeshStandardMaterial({ color: 0x15161b }),
-      trimMat, new THREE.MeshStandardMaterial({ color: 0x15161b }),
-      boardMatFor(seed, len, near), boardMatFor(seed + 50, len, near),
-    ]);
+    const mat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.65, metalness: 0.1, transparent: near, opacity: near ? 0.35 : 1, depthWrite: !near });
+    const face = new THREE.PlaneGeometry(len, boardH);
+    const faces = mergeGeometries([face.clone().translate(0, 0, 0.04), face.clone().rotateY(Math.PI).translate(0, 0, -0.04)]);
+    face.dispose();
+    const m = new THREE.Mesh(faces, mat);
     m.position.set(x, boardH / 2, z); m.rotation.y = rotY;
     m.receiveShadow = true; m.castShadow = !near;
+    m.updateMatrix();
     scene.add(m);
-    return m;
+    trims.push(new THREE.BoxGeometry(len, 0.03, 0.09).translate(0, boardH / 2, 0).applyMatrix4(m.matrix));
+    for (const e of [-1, 1]) caps.push(new THREE.BoxGeometry(0.03, boardH, 0.08).translate(e * len / 2, 0, 0).applyMatrix4(m.matrix));
+  };
+  const finishBoards = () => {
+    for (const [gs, mat] of [[trims, trimMat], [caps, capMat]]) {
+      const m = new THREE.Mesh(mergeGeometries(gs), mat);
+      m.receiveShadow = true;
+      scene.add(m);
+      gs.forEach(g => g.dispose());
+    }
   };
   const M = new THREE.Matrix4();
 
@@ -318,6 +332,8 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     roofNet.rotation.x = Math.PI / 2; roofNet.position.y = roofH;
     scene.add(roofNet);
   }
+
+  finishBoards();
 
   // ---------------------------------------------------------------- goals
   const postWhite = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.3, metalness: 0.2, emissive: 0x111111 });

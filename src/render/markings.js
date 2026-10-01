@@ -97,7 +97,7 @@ export function buildOpenPitch(maxAniso) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(fullL, fullW), turf);
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
   group.add(ground);
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xeeeeea, roughness: 0.7, emissive: 0x080808, polygonOffset: true, polygonOffsetFactor: -2 });
+  const lineMat = new THREE.MeshStandardMaterial({ color: 0xd6d6d0, roughness: 0.8, emissive: 0x000000, polygonOffset: true, polygonOffsetFactor: -2 });
   const lines = new THREE.Mesh(markingGeometry(), lineMat);
   lines.position.y = 0.004; lines.receiveShadow = true;
   group.add(lines);

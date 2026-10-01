@@ -1,6 +1,7 @@
 // Real-time performance profile of an AI-vs-AI match in Chrome (no screenshots while
 // measuring). Frame-time distribution, spikes, per-section cost and JS heap growth.
-//   node tools/play/perf.mjs [label] [--secs=20] [--gfx=3] [--venue=0] [--format=0] [--w=1280 --h=720]
+//   node tools/play/perf.mjs [label] [--secs=20] [--gfx=3] [--venue=0] [--format=0] [--w=1280 --h=720] [--cpu=4]
+// --cpu=N throttles the CPU N× (Chrome's emulation) — a rough stand-in for a phone.
 import fs from 'fs';
 import { harness, sleep } from './harness.mjs';
 
@@ -13,6 +14,7 @@ const H = await harness({ w, h, query: '?profile' });
 const settings = { GRAPHICS: gfx, VENUE: venue };
 if (format != null) settings.FORMAT = +format;
 await H.start(settings, { spectate: true });
+if (+arg('cpu', 1) > 1) await (await H.page.createCDPSession()).send('Emulation.setCPUThrottlingRate', { rate: +arg('cpu', 1) });
 await H.resume();
 await sleep(3000);   // warm up: shader compiles, caches
 const heap0 = (await H.page.metrics()).JSHeapUsedSize;
