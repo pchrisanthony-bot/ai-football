@@ -45,11 +45,3 @@ export const ROLES = {
   ST: { ...STRIKER, label: 'Striker' },
   CF: { ...CENTRE_FORWARD, label: 'Centre-forward' },
 };
-
-export const LINES = ['GK', 'DEF', 'MID', 'ATT'];
-
-export function role(id) {
-  const r = ROLES[id];
-  if (!r) throw new Error(`Unknown role "${id}"`);
-  return r;
-}

@@ -37,7 +37,34 @@ const outOff = async (H, { x, z, vx = 0, vz = 0, team }) => {
 };
 const pitch = H => H.eval(() => { const m = __G.match; return { L: m.oppGoalX(0), W: m.ball && window.__telemetry().pitch.width / 2 }; });
 
+// Where the human and the ball are on screen (0..1; outside = off-screen).
+const onScreen = H => H.eval(() => {
+  const m = __G.match, cam = __R.camera, V = new cam.position.constructor();
+  const at = (x, y, z) => { V.set(x, y, z).project(cam); return [+((V.x + 1) / 2).toFixed(2), +((1 - V.y) / 2).toFixed(2)]; };
+  return { human: m.human ? at(m.human.x, 1, m.human.z) : null, ball: at(m.ball.x, m.ball.y, m.ball.z) };
+});
+
 const SCENARIOS = {
+  // A human on a big pitch: sprint-dribble upfield, pass, then defend — the camera must
+  // keep the man and the ball in frame throughout.
+  async 'human-run'(H) {
+    await H.step(70);                                    // kick-off whistle
+    const frames = [];
+    const log = async tag => frames.push({ tag, ...(await onScreen(H)), t: await H.eval(() => { const t = __telemetry(); return { human: t.player?.name, owner: t.ball.owner, speed: t.player?.speed, cam: t.camera.dist }; }) });
+    await log('start');
+    await H.down('KeyD', 'ShiftLeft');
+    for (let i = 0; i < 4; i++) { await H.step(25); await log(`sprint ${i}`); }
+    await H.shot('human-run-sprint');
+    await H.up('ShiftLeft');
+    await H.tap('KeyJ', 6);
+    await H.up('KeyD');
+    for (let i = 0; i < 4; i++) { await H.step(30); await log(`after pass ${i}`); }
+    await H.shot('human-run-pass');
+    for (let i = 0; i < 6; i++) { await H.step(60); await log(`play ${i}`); }
+    await H.shot('human-run-later');
+    const off = frames.filter(f => f.human && (f.human[0] < 0 || f.human[0] > 1 || f.human[1] < 0 || f.human[1] > 1)).length;
+    return { offScreenFrames: off, frames: frames.map(f => `${f.tag}: human ${f.t.human} @${f.human} ball @${f.ball} owner ${f.t.owner} ${f.t.speed} m/s cam ${f.t.cam}`) };
+  },
   // Open pitch: a throw-in to us — the human throws it to the man the stick points at.
   async 'throw-in'(H) {
     const { L, W } = await pitch(H);
