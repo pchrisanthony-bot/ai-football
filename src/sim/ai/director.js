@@ -328,6 +328,7 @@ export class AIDirector {
         const ic = this.intercept(p);
         this.goTo(p, ic.x, ic.z, maxSpeed(p, true), 0.2);
         p.sprinting = true;
+        this.planTouch(p, ic);
         break;
       }
       case 'CHASE': {
@@ -410,6 +411,18 @@ export class AIDirector {
         if (p.speed < 1) p.faceTarget = { x: b.x, z: b.z };
       }
     }
+  }
+
+  // First-touch plan for a receiver: cushion it under pressure, otherwise take it
+  // forward into the space toward goal.
+  planTouch(p, ic) {
+    const m = this.m;
+    let near = 99;
+    for (const o of m.opponents(p)) near = Math.min(near, Math.hypot(o.x - ic.x, o.z - ic.z));
+    p.cushion = near < 2.6;
+    if (p.cushion) { p.touchDir = null; return; }
+    const gx = m.oppGoalX(p.team), dx = gx - ic.x, dz = -ic.z * 0.6, d = Math.hypot(dx, dz) || 1;
+    p.touchDir = { x: dx / d, z: dz / d };
   }
 
   go(p, dx, dz, speed) { p.move.x = dx; p.move.z = dz; p.move.speed = speed; }

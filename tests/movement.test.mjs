@@ -13,11 +13,12 @@ function solo(arch, withBall = false) {
   m.human = p;
   if (withBall) { m.ball.x = p.x + 0.45; m.ball.z = p.z; m.gainPossession(p, true); }
   else Object.assign(m.ball, { x: 12, z: 7, vx: 0, vz: 0, owner: null });
+  const events = [];
   const drive = (x, z, speed, sprint, secs, each) => {
     p.move.x = x; p.move.z = z; p.move.speed = speed; p.sprinting = sprint;
-    for (let t = 0; t < secs; t += SIM_DT) { m.step(SIM_DT); m.drainEvents(); each && each(t + SIM_DT); }
+    for (let t = 0; t < secs; t += SIM_DT) { m.step(SIM_DT); const ev = m.drainEvents(); events.push(...ev); each && each(t + SIM_DT, ev); }
   };
-  return { m, p, drive };
+  return { m, p, drive, events };
 }
 
 export default function () {
@@ -61,13 +62,19 @@ export default function () {
     let lead = 0, owned = true, knocks = 0;
     drive(1, 0, 7.4, true, 2, () => { lead = Math.max(lead, m.ball.x - p.x); owned = owned && m.ball.owner === p; if (p.dribble.mode === 'knock') knocks++; });
     check('sprint dribble knocks it 1–3 m ahead and keeps it', owned && knocks > 0 && lead > 1 && lead < 3, `max lead ${lead.toFixed(2)} m, owned ${owned}`);
-    // Cut at pace: the ball doesn't swing round with him — it carries on until he reaches it.
-    const bx = m.ball.vx, bz = m.ball.vz;
-    drive(0, -1, 7.4, true, 0.1);
-    const turn = Math.abs(Math.atan2(m.ball.vz, m.ball.vx) - Math.atan2(bz, bx));
-    check('a cut at pace leaves the ball on its line for a moment', turn < 0.5, `ball turned ${(turn * 57.3).toFixed(0)}° in 0.1 s`);
-    drive(0, -1, 7.4, true, 1.5);
-    check('…then he reaches it and takes it the new way', m.ball.owner === p && m.ball.vz < -2, `owned ${m.ball.owner === p}, ball vz ${m.ball.vz.toFixed(1)}`);
+    // Cut at pace: the ball only changes direction when his foot touches it (no tether
+    // dragging it round), and that touch sends it where the stick points.
+    let pv = { x: m.ball.vx, z: m.ball.vz }, untouchedTurns = 0, touches = 0;
+    drive(0, -1, 7.4, true, 0.45, (t, ev) => {
+      const touched = ev.some(e => e.type === 'touch' || e.type === 'firstTouch');
+      if (touched) touches++;
+      const a = Math.atan2(m.ball.vz, m.ball.vx), b0 = Math.atan2(pv.z, pv.x);
+      const d = Math.abs(((a - b0) * 57.3 + 540) % 360 - 180);
+      if (!touched && Math.hypot(pv.x, pv.z) > 1 && d > 25) untouchedTurns++;
+      pv = { x: m.ball.vx, z: m.ball.vz };
+    });
+    check('a cut at pace turns the ball only through a touch (no tether)', untouchedTurns === 0 && touches > 0, `${touches} touches, ${untouchedTurns} untouched swings`);
+    check('…and that touch takes it the new way', m.ball.owner === p && m.ball.vz < -2, `owned ${m.ball.owner === p}, ball vz ${m.ball.vz.toFixed(1)}`);
   }
   // Close control glues it to the feet.
   {

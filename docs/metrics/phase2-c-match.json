@@ -1,0 +1,79 @@
+{
+ "label": "phase2-c-match",
+ "date": "2026-10-01T06:26:15.097Z",
+ "format": "default",
+ "match": [
+  {
+   "seed": 1,
+   "score": "5-3",
+   "goals": 8,
+   "kicks": 79,
+   "shots": 27,
+   "passPct": 71,
+   "changesPerMin": 20.3,
+   "longest": 8.9,
+   "msPerStep": 0.02,
+   "nan": false
+  },
+  {
+   "seed": 2,
+   "score": "6-4",
+   "goals": 10,
+   "kicks": 80,
+   "shots": 19,
+   "passPct": 75,
+   "changesPerMin": 16.7,
+   "longest": 14.2,
+   "msPerStep": 0.013,
+   "nan": false
+  },
+  {
+   "seed": 3,
+   "score": "5-4",
+   "goals": 9,
+   "kicks": 97,
+   "shots": 33,
+   "passPct": 73,
+   "changesPerMin": 20.7,
+   "longest": 3.9,
+   "msPerStep": 0.013,
+   "nan": false
+  },
+  {
+   "seed": 4,
+   "score": "5-5",
+   "goals": 10,
+   "kicks": 86,
+   "shots": 24,
+   "passPct": 81,
+   "changesPerMin": 17.3,
+   "longest": 5.4,
+   "msPerStep": 0.012,
+   "nan": false
+  },
+  {
+   "seed": 5,
+   "score": "4-3",
+   "goals": 7,
+   "kicks": 95,
+   "shots": 31,
+   "passPct": 58,
+   "changesPerMin": 23,
+   "longest": 4,
+   "msPerStep": 0.012,
+   "nan": false
+  },
+  {
+   "seed": 6,
+   "score": "5-2",
+   "goals": 7,
+   "kicks": 91,
+   "shots": 32,
+   "passPct": 73,
+   "changesPerMin": 18.7,
+   "longest": 4.8,
+   "msPerStep": 0.012,
+   "nan": false
+  }
+ ]
+}

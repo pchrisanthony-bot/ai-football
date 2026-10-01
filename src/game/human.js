@@ -52,6 +52,7 @@ export class HumanController {
     }
     // Street Ball Control with the ball, jockey without it.
     const ctl = inp.down('control');
+    p.cushion = ctl;                      // held while a pass arrives: cushion the first touch
     p.closeControl = mine && ctl && !b.inHands;
     p.jockey = !mine && ctl;
     p.faceTarget = p.jockey ? { x: b.x, z: b.z } : null;

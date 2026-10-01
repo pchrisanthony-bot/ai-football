@@ -50,8 +50,10 @@ export const BALL = {
 export const DRIB = {
   knockMin: 3.3,      // m/s: faster than this (no close control) -> knock-on touches
   touchGap: 0.2,      // s: fastest touch cadence
+  trapGap: 0.12,      // s: a sole trap can follow a touch sooner than another push
   reach: 0.62,        // m ahead of the body where the foot can play it
-  lunge: 0.55,        // m of extra reach when stretching to cut the ball a new way
+  lunge: 0.55,        // m of extra reach when stretching to cut/stop the ball (at jogging pace;
+                      //   a sprinting stride reaches further — see knockDribble)
   lose: 3.4,          // m: further than this it's a loose ball
   steal: 0.5,         // m: a defender's foot this close to a free-rolling dribble can nick it
 };
@@ -72,6 +74,31 @@ export function setSurface(kind = 'court', wet = false) {
   }
 }
 
+// First touch: the receiving foot is a soft contact, not a magnet. Touch quality
+// (control attribute vs the pace, angle and height of the ball, and pressure)
+// decides how much of the incoming relative velocity survives the touch.
+// Intent: 'cushion' (close control held) kills it, 'directed' (stick / AI plan) takes
+// it into space, 'neutral' (no input) deflects it and lets it run on.
+export const TOUCH = {
+  base: 0.3,            // quality before the control attribute
+  skill: 0.62,          // weight of attrs.control
+  freePace: 6,          // m/s of relative pace that costs no quality
+  pacePenalty: 0.032,   // quality lost per m/s above that
+  side: 0.1,            // ball across the body
+  behind: 0.22,         // ball from behind
+  airborne: 0.15,       // bouncing / at shin height
+  pressure: 0.1,        // an opponent within 1.6 m
+  cushionBonus: 0.12,
+  keep: { cushion: 0.05, directed: 0.14, neutral: 0.34 },   // residual of incoming relative speed at a perfect touch…
+  keepPoor: 0.5,        // …plus this much more at the worst touch
+  push: { cushion: 0.3, directedStill: 1.4, directedRun: 2.4, neutral: 0.15 },   // m/s placed in the touch direction
+  rebound: 0.55,        // residual that would go through the body bounces back off it
+  scatter: 1.2,         // m/s of sideways error at the worst touch
+  miscontrol: 0.17,     // below this quality, with pace left on it, it's a loose ball
+  trapFree: 3.0,        // m/s: a ball slower than this (relative) can be stopped dead under the sole;
+                        //   anything quicker needs a proper (quality-limited) cushion touch
+};
+
 export const PLAYER = {
   radius: 0.36,
   height: 1.8,
@@ -85,6 +112,7 @@ export const PLAYER = {
   grip: 15,           // m/s² sideways grip at full sprint…
   gripSlow: 30,       // …and at walking pace (tight turns are cheap when slow)
   gripMax: 27,        // friction circle: cap on total horizontal acceleration
+  carryBrake: 0.82,   // braking with the ball at your feet is a little softer than without
   controlRadius: 0.62,
   staminaDrain: 0.09, // per second of sprinting
   staminaRegen: 0.05,

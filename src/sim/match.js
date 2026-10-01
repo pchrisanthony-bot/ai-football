@@ -2,7 +2,7 @@
 // Match: the whole simulation. Pure logic, fixed 120 Hz, no rendering.
 // The renderer and audio read `match` state and drain `match.events`.
 // =====================================================================
-import { SIM_DT, COURT, BALL, PLAYER, KICK, RULES, STYLE, TEAM_SIZE, DRIB } from '../config.js';
+import { SIM_DT, COURT, BALL, PLAYER, KICK, RULES, STYLE, TEAM_SIZE, DRIB, TOUCH } from '../config.js';
 import { makeBall, stepBall, predictPath, copyBall } from './ball.js';
 import { makePlayer, movePlayer, separatePlayers, maxSpeed, TEAMS } from './players.js';
 import { groundPassSpeed, solveLob, solveStrike, rollTime } from './kicks.js';
@@ -171,6 +171,7 @@ export class Match {
       if (p.stun > 0) lock = Math.min(lock, 0.15);
       if (p.closeControl) lock = Math.min(lock, 0.55);
       if (this.isGB(p.team)) lock *= 1.08;
+      p.carrying = p === own;
       if (knocking && p === own) this.steerToBall(p);
       if (!(a && ACTIONS[a.type].selfMove)) movePlayer(p, dt, lock);
       p.steer = null;
@@ -294,7 +295,7 @@ export class Match {
     const cosA = dx * hx + dz * hz;
     const s = Math.min(1, p.speed / PLAYER.sprint), ctl = p.attrs.control;
     // How far the touch runs ahead of the stride: longer at pace, shorter with good feet.
-    let lead = (0.15 + 0.78 * s * s) * (1.25 - 0.45 * ctl) * (p.sprinting ? 1.12 : 1) * heavy;
+    let lead = (0.15 + 0.55 * s * s) * (1.25 - 0.45 * ctl) * (p.sprinting ? 1.12 : 1) * heavy;
     let base = Math.max(0, p.speed * cosA);
     if (cosA < 0.4) {
       // A cut: a small touch across the body. Planting to do it costs pace.
@@ -309,13 +310,22 @@ export class Match {
   }
 
   // Run onto a knocked-on ball; the stick's direction is applied at the next touch.
+  // Wanting to stop (stick released), he never speeds up after it: he holds his pace
+  // (or eases off as the ball slows) just long enough to get a foot on it.
   steerToBall(p) {
     const b = this.ball, mv = p.move;
     const tx = b.x + b.vx * 0.12, tz = b.z + b.vz * 0.12;
     const dx = tx - p.x, dz = tz - p.z, d = Math.hypot(dx, dz);
     if (d < 0.2) return;
-    p.steer = { x: dx / d, z: dz / d, speed: Math.max(mv.speed, Math.min(PLAYER.jog, d * 3)) };
+    let speed;
+    if (this.wantsStop(p)) {
+      const along = (b.vx * dx + b.vz * dz) / d;               // ball pace away from him
+      speed = Math.min(Math.max(p.speed, Math.min(2.5, d * 3)), Math.max(0, along) + 1.2 + d * 1.2);
+    } else speed = Math.max(mv.speed, Math.min(PLAYER.jog, d * 3));
+    p.steer = { x: dx / d, z: dz / d, speed };
   }
+
+  wantsStop(p) { return p.move.speed < DRIB.knockMin * 0.75; }
 
   knockDribble(p, dt) {
     const b = this.ball, d = p.dribble;
@@ -360,14 +370,19 @@ export class Match {
       b.x += (sx - b.x) * k; b.z += (sz - b.z) * k;
       return;
     }
-    // Wanting to cut: he lunges a stride to get a foot on it rather than waiting for
-    // the ball to come back into his stride.
+    // Wanting to cut or to stop: he stretches a stride to get a foot on it rather than
+    // waiting for the ball to come back into his stride.
     const ml = Math.hypot(p.move.x, p.move.z);
+    const stop = this.wantsStop(p);
     const cut = ml > 0.01 && (p.move.x * hx + p.move.z * hz) / ml < 0.77;
-    const inReach = f > -0.2 && f < DRIB.reach + (cut ? DRIB.lunge : 0) && Math.abs(lat) < 0.55 && b.y < 0.5;
-    if (!inReach || this.time - d.lastT < DRIB.touchGap) return;
-    if (p.move.speed < DRIB.knockMin * 0.75 || p.speed < 2.2) this.settle(p);    // trap it
-    else this.knockTouch(p);
+    const lunge = DRIB.lunge * (0.7 + 0.6 * Math.min(1, p.speed / PLAYER.sprint));   // longer stride at pace
+    const inReach = f > -0.2 && f < DRIB.reach + (cut || stop ? lunge : 0) && Math.abs(lat) < 0.55 + (stop ? 0.15 : 0) && b.y < 0.5;
+    if (!inReach || this.time - d.lastT < (stop ? DRIB.trapGap : DRIB.touchGap)) return;
+    if (stop || p.speed < 2.2) {
+      // Sole on it — but only a slow ball dies under the foot; a quick one needs a cushion.
+      if (Math.hypot(b.vx - p.vx, b.vz - p.vz) > TOUCH.trapFree) this.firstTouch(p, 'cushion');
+      else this.settle(p);
+    } else this.knockTouch(p);
   }
 
   // Back to the feet (slot dribbling): a trap or a settle.
@@ -380,6 +395,62 @@ export class Match {
     d.lat = clamp(-rx * fz + rz * fx, -0.5, 0.5);
     b.lastTouch = p;
     this.emit({ type: 'touch', pid: p.id, power: 0.1 });
+  }
+
+  // First touch on a moving ball (see TOUCH in config). The ball comes off the foot
+  // with a velocity built from the player's own motion, a push where he wants it,
+  // and whatever of the incoming pace the touch didn't take off; then it's free
+  // (knock-on dribbling) until he collects it. Returns the touch quality.
+  firstTouch(p, force = null) {
+    const b = this.ball;
+    const inV = Math.hypot(b.vx, b.vz);
+    const rvx = b.vx - p.vx, rvz = b.vz - p.vz, rel = Math.hypot(rvx, rvz) || 1e-6;
+    const ux = rvx / rel, uz = rvz / rel;                       // incoming, relative to him
+    const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
+    const front = -(ux * fx + uz * fz);                         // 1 = straight at his front
+    // Intent: a human's stick, an AI's plan, or a cushion (close control held).
+    let intent = null;
+    if (p.human) { const ml = Math.hypot(p.move.x, p.move.z); if (ml > 0.1 && p.move.speed > 0.3) intent = { x: p.move.x / ml, z: p.move.z / ml }; }
+    else if (p.touchDir) intent = p.touchDir;
+    const mode = force || (p.cushion ? 'cushion' : intent ? 'directed' : 'neutral');
+    let near = 99;
+    for (const o of this.opponents(p)) near = Math.min(near, Math.hypot(o.x - p.x, o.z - p.z));
+    const q = clamp(TOUCH.base + TOUCH.skill * p.attrs.control
+      - Math.max(0, rel - TOUCH.freePace) * TOUCH.pacePenalty
+      - (front > 0.45 ? 0 : front > -0.35 ? TOUCH.side : TOUCH.behind)
+      - (b.y > 0.3 ? TOUCH.airborne : 0) - (near < 1.6 ? TOUCH.pressure : 0)
+      + (mode === 'cushion' ? TOUCH.cushionBonus : 0), 0.05, 0.97);
+    // What survives of the incoming pace; into his body, it bounces back off him.
+    const keep = TOUCH.keep[mode] + (1 - q) * TOUCH.keepPoor;
+    let resX = rvx * keep, resZ = rvz * keep;
+    if (front > 0.45) { resX *= -TOUCH.rebound; resZ *= -TOUCH.rebound; }
+    // Where he puts it.
+    const pace = Math.min(1, p.speed / PLAYER.sprint);
+    let dx = fx, dz = fz, push = TOUCH.push.neutral;
+    if (mode === 'directed' && intent) { dx = intent.x; dz = intent.z; push = TOUCH.push.directedStill + (TOUCH.push.directedRun - TOUCH.push.directedStill) * pace; }
+    else if (mode === 'cushion') push = TOUCH.push.cushion;
+    else if (p.speed > 1) { dx = p.vx / p.speed; dz = p.vz / p.speed; }
+    const err = (this.rand() - 0.5) * 2 * TOUCH.scatter * (1 - q);
+    let ox = p.vx + dx * push + resX - dz * err, oz = p.vz + dz * push + resZ + dx * err;
+    // The ball keeps rolling: spin to match.
+    b.vx = ox; b.vz = oz; b.vy = b.y > 0.3 ? (1 - q) * 1.2 : 0;
+    b.wx = oz / R; b.wz = -ox / R; b.wy = 0;
+    const outV = Math.hypot(ox, oz);
+    const turnDeg = Math.abs(((Math.atan2(oz, ox) - Math.atan2(rvz, rvx) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * 180 / Math.PI;
+    const relOut = Math.hypot(ox - p.vx, oz - p.vz);
+    this.lastFirstTouch = { pid: p.id, name: p.name, inV, relIn: rel, outV, relOut, quality: q, turnDeg, mode, t: this.time };
+    this.emit({ type: 'firstTouch', ...this.lastFirstTouch });
+    if (q < TOUCH.miscontrol && relOut > 3.5) {
+      // Miscontrol: it's away from him — a loose ball.
+      b.lastTouch = p; b.passTo = null; p.noTouch = 0.2; b.redirectT = this.time;
+      this.emit({ type: 'deflect', pid: p.id, x: b.x, y: b.y, z: b.z, speed: relOut });
+      return q;
+    }
+    this.gainPossession(p);
+    p.dribble.mode = 'knock'; p.dribble.lastT = this.time;
+    b.lastTouch = p;
+    this.emit({ type: 'touch', pid: p.id, power: Math.min(1, relOut / 6) });
+    return q;
   }
 
   // ------------------------------------------------------------------ ball update & interactions
@@ -433,14 +504,7 @@ export class Match {
       const rel = Math.hypot(rvx, rvz, b.vy * 0.5);
       if (b.y < 0.6 && hd < PLAYER.controlRadius) {
         const ctlMax = 8 + 9 * p.attrs.control;
-        if (rel < ctlMax || (b.passTo === p && rel < ctlMax + 4)) {
-          this.gainPossession(p);
-          // Receiving on the move: the first touch goes into space where he's heading
-          // (heavier when the pass was hot and the feet aren't great).
-          if (!p.closeControl && p.speed > DRIB.knockMin - 0.6 && p.move.speed > DRIB.knockMin)
-            this.knockTouch(p, 1 + clamp((rel - 6) / 10, 0, 0.8) * (1.2 - p.attrs.control));
-          return;
-        }
+        if (rel < ctlMax || (b.passTo === p && rel < ctlMax + 4)) { this.firstTouch(p); return; }
         // Heavy touch: it bounces off the shin.
         const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
         b.vx = b.vx * 0.28 + fx * 2.2 + p.vx * 0.5; b.vz = b.vz * 0.28 + fz * 2.2 + p.vz * 0.5;

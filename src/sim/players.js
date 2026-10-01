@@ -103,7 +103,7 @@ export function movePlayer(p, dt, lockMove = 1) {
   const prof = PROFILE[p.arch] || PROFILE.Playmaker;
   const r = Math.min(1, sp / top);
   const aF = PLAYER.accel * prof.a * (0.8 + 0.35 * p.attrs.accel) * Math.max(0.1, 1 - Math.pow(r, prof.n));
-  const aB = PLAYER.brake * ag;
+  const aB = PLAYER.brake * ag * (p.carrying ? PLAYER.carryBrake : 1);
   const aL = (PLAYER.gripSlow + (PLAYER.grip - PLAYER.gripSlow) * r) * ag;
 
   // Along the run: accelerate or brake toward the wanted speed (never below zero —
