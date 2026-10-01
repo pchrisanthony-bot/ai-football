@@ -19,6 +19,8 @@ import { evalShots, evalPasses, evalDribble, frontDefender, pressure, reachTime,
 import { aiRanges } from './ranges.js';
 
 const TEAM_TICK = 0.3;
+// Personal space between team-mates (m) and how hard it steers a run.
+const SEPARATION = { radius: 1.5, weight: 1.1 };
 // How dangerous a player is in the air (heading at set pieces).
 const aerial = p => p.attrs.strength * 0.6 + p.attrs.shot * 0.4;
 // The point k metres from a toward b.
@@ -455,8 +457,30 @@ export class AIDirector {
   stop(p) { p.move.x = 0; p.move.z = 0; p.move.speed = 0; }
   goTo(p, x, z, speed, tol = 0.3) {
     const dx = x - p.x, dz = z - p.z, d = Math.hypot(dx, dz);
-    if (d < tol) { this.stop(p); return; }
-    this.go(p, dx / d, dz / d, Math.min(speed, 0.6 + d * 2.6));
+    const sep = this.separation(p);
+    if (d < tol) {
+      // At his spot, but crowding a team-mate: ease out of the way.
+      if (sep.m > 0.25) this.go(p, sep.x / sep.m, sep.z / sep.m, 1.2 * sep.m); else this.stop(p);
+      return;
+    }
+    // Head for the spot, steered off any team-mate in his personal space.
+    const hx = dx / d + sep.x * SEPARATION.weight, hz = dz / d + sep.z * SEPARATION.weight, hl = Math.hypot(hx, hz) || 1;
+    this.go(p, hx / hl, hz / hl, Math.min(speed, 0.6 + d * 2.6));
+  }
+
+  // Reynolds separation: a push away from each team-mate inside the personal-space radius,
+  // stronger the closer he is. Opponents are left alone (marking is meant to be tight).
+  separation(p) {
+    let x = 0, z = 0;
+    const R = SEPARATION.radius;
+    for (const q of this.m.players) {
+      if (q === p || q.team !== p.team || !q.active) continue;
+      const ox = p.x - q.x, oz = p.z - q.z, dd = Math.hypot(ox, oz);
+      if (dd >= R || dd < 1e-4) continue;
+      const w = (R - dd) / R / dd;
+      x += ox * w; z += oz * w;
+    }
+    return { x, z, m: Math.hypot(x, z) };
   }
 
   // ------------------------------------------------------------------ keeper FSM
