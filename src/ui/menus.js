@@ -1,6 +1,6 @@
 // Menus: title, match setup, pause, controls, full-time. Keyboard, gamepad and mouse.
 import { crest } from './crest.js';
-import { TEAMS } from '../sim/players.js';
+import { TEAMS } from '../sim/squads.js';
 
 const h = (tag, cls, html = '') => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
 
@@ -141,17 +141,17 @@ export function controlsPanel() {
 const avg = xs => xs.reduce((s, x) => s + x, 0) / (xs.length || 1);
 export function rating(p) {
   const a = p.attrs;
-  const vals = p.role === 'GK' ? [a.keeping, a.keeping, a.accel, a.strength, a.pass] : [a.pace, a.accel, a.control, a.pass, a.shot, a.tackle, a.skill, a.strength].sort((x, y) => y - x).slice(0, 5);
+  const vals = p.line === 'GK' ? [a.keeping, a.keeping, a.accel, a.strength, a.pass] : [a.pace, a.accel, a.control, a.pass, a.shot, a.tackle, a.skill, a.strength].sort((x, y) => y - x).slice(0, 5);
   return Math.round(40 + 55 * avg(vals));
 }
 const ARCH_TAG = { Keeper: 'KEEPER', Enforcer: 'ENFORCER', Playmaker: 'PLAYMAKER', Trickster: 'TRICKSTER', Speedster: 'SPEEDSTER', Finisher: 'FINISHER' };
 function teamBars(match, t) {
   const ps = match.players.filter(p => p.team === t);
-  const out = ps.filter(p => p.role !== 'GK');
-  const gk = ps.find(p => p.role === 'GK');
-  const att = avg(out.filter(p => p.role !== 'DEF').map(p => (p.attrs.shot + p.attrs.skill + p.attrs.pace) / 3));
+  const out = ps.filter(p => p.line !== 'GK');
+  const gk = ps.find(p => p.line === 'GK');
+  const att = avg(out.filter(p => p.line !== 'DEF').map(p => (p.attrs.shot + p.attrs.skill + p.attrs.pace) / 3));
   const mid = avg(out.map(p => (p.attrs.pass + p.attrs.control) / 2));
-  const def = avg([...out.filter(p => p.role === 'DEF').map(p => (p.attrs.tackle + p.attrs.strength) / 2), gk ? gk.attrs.keeping : 0.7]);
+  const def = avg([...out.filter(p => p.line === 'DEF').map(p => (p.attrs.tackle + p.attrs.strength) / 2), gk ? gk.attrs.keeping : 0.7]);
   return { att, mid, def };
 }
 function kitSVG(k, number = 10) {
@@ -171,16 +171,16 @@ const bar = (label, v, color) => `<div class="lu-bar"><span>${label}</span><i><b
 export function lineupsPanel(match, sub) {
   const team = t => {
     const T = match.teams[t];
-    const rows = match.players.filter(p => p.team === t).map(p => `<div class="lu-row"><i class="pos pos-${p.role}">${p.role}</i><b>${p.number}</b><span>${p.name}<small>${ARCH_TAG[p.arch] || p.arch.toUpperCase()}</small></span><em>${rating(p)}</em></div>`).join('');
+    const rows = match.players.filter(p => p.team === t).map(p => `<div class="lu-row"><i class="pos pos-${p.line}">${p.role}</i><b>${p.number}</b><span>${p.name}<small>${ARCH_TAG[p.arch] || p.arch.toUpperCase()}</small></span><em>${rating(p)}</em></div>`).join('');
     return `<div class="lu-team"><div class="lu-head" style="--c:${T.def.kit.shirt}">${T.def.name}</div>${rows}</div>`;
   };
   const side = t => {
     const T = match.teams[t], b = teamBars(match, t);
-    const star = match.players.filter(p => p.team === t && p.role !== 'GK').sort((x, y) => rating(y) - rating(x))[0];
+    const star = match.players.filter(p => p.team === t && p.line !== 'GK').sort((x, y) => rating(y) - rating(x))[0];
     return `<div class="lu-side"><div class="lu-crest">${crest(T.def, 40)}</div>${kitSVG(T.def.kit, star ? star.number : 10)}
       ${bar('ATT', b.att, '#FFC43D')}${bar('MID', b.mid, '#37D67A')}${bar('DEF', b.def, '#3D8BFF')}</div>`;
   };
-  return h('div', 'lineups', `${team(0)}<div class="lu-mid"><div class="lu-vs">${side(0)}<div class="lu-v">VS</div>${side(1)}</div><div class="lu-comp">${sub}</div></div>${team(1)}`);
+  return h('div', match.cfg.teamSize > 7 ? 'lineups big' : 'lineups', `${team(0)}<div class="lu-mid"><div class="lu-vs">${side(0)}<div class="lu-v">VS</div>${side(1)}</div><div class="lu-comp">${sub}</div></div>${team(1)}`);
 }
 
 // Full-time sheet (FTS layout): crests + final score, scorers with times, man of the
@@ -194,7 +194,7 @@ export function statsPanel(match) {
     ['SHOTS', A.stats.shots, B.stats.shots],
     ['ON TARGET', A.stats.onTarget, B.stats.onTarget],
     ['PASS COMPLETION', pct(A.stats.passesOk, A.stats.passes), pct(B.stats.passesOk, B.stats.passes), '%'],
-    ['CAGE GOALS', A.stats.cageGoals, B.stats.cageGoals],
+    match.cfg.rules.outOfPlay ? ['CORNERS', A.stats.corners, B.stats.corners] : ['CAGE GOALS', A.stats.cageGoals, B.stats.cageGoals],
     ['SKILLS', A.stats.skills, B.stats.skills],
     ['PANNAS', A.stats.pannas, B.stats.pannas],
     ['SAVES', A.stats.saves, B.stats.saves],

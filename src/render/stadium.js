@@ -2,17 +2,23 @@
 // main stand, a scrolling LED ribbon, and ~1200 instanced fans in one draw call.
 // The fans wear the two teams' colours, bob with the atmosphere and jump on goals.
 import * as THREE from 'three';
-import { COURT } from '../config.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { PITCH } from '../sim/pitch.js';
 import { ledRibbon } from './textures.js';
 
-const { halfL, halfW } = COURT;
-
 export function buildStands(scene, venue) {
-  const rows = 9, rise = 0.48, depth = 0.86;
+  const { halfL, halfW } = PITCH;
+  const open = PITCH.boundary === 'open';
+  const rows = open ? 12 : 9, rise = 0.48, depth = 0.86;
+  const gap = open ? PITCH.runoff + 2.5 : 3.1;     // pitch edge → front of the stands
   const concrete = new THREE.MeshStandardMaterial({ color: 0x2c313d, roughness: 0.9 });
   const seatA = new THREE.MeshStandardMaterial({ color: 0x1d3f8a, roughness: 0.7 });
   const seatB = new THREE.MeshStandardMaterial({ color: 0x8a1d2a, roughness: 0.7 });
   const seats = [];   // [x, y, z, facing]
+  // Static geometry is gathered per material and merged: a stand is three draw calls, not
+  // one per row (measured: draw-call submission is what costs on a slow CPU).
+  const parts = new Map();
+  const put = (mat, g, x, y, z) => { if (!parts.has(mat)) parts.set(mat, []); parts.get(mat).push(g.translate(x, y, z)); };
 
   // A stand is a stack of steps running along one side, rising away from the pitch.
   // along: 'x' (main stand, far side) or 'z' (the ends). front: the pitch-side edge.
@@ -21,10 +27,7 @@ export function buildStands(scene, venue) {
     for (let r = 0; r < rows; r++) {
       const h = (r + 1) * rise, off = front + dir * (r * depth + depth / 2);
       const g = new THREE.BoxGeometry(along === 'x' ? len : depth, h, along === 'x' ? depth : len);
-      const m = new THREE.Mesh(g, r % 3 === 2 ? concrete : colour);
-      if (along === 'x') m.position.set(mid, h / 2, off); else m.position.set(off, h / 2, mid);
-      m.receiveShadow = true;
-      scene.add(m);
+      if (along === 'x') put(r % 3 === 2 ? concrete : colour, g, mid, h / 2, off); else put(r % 3 === 2 ? concrete : colour, g, off, h / 2, mid);
       // fans on this row (skip a few seats: not every ticket sold)
       for (let a = a0 + 0.3; a < a1 - 0.3; a += 0.56) {
         if (Math.random() < 0.1) continue;
@@ -36,11 +39,10 @@ export function buildStands(scene, venue) {
     }
     // back wall
     const bh = rows * rise + 2.4, back = front + dir * (rows * depth + 0.2);
-    const bw = new THREE.Mesh(new THREE.BoxGeometry(along === 'x' ? len + 0.4 : 0.4, bh, along === 'x' ? 0.4 : len + 0.4), concrete);
-    if (along === 'x') bw.position.set(mid, bh / 2, back); else bw.position.set(back, bh / 2, mid);
-    scene.add(bw);
+    const bw = new THREE.BoxGeometry(along === 'x' ? len + 0.4 : 0.4, bh, along === 'x' ? 0.4 : len + 0.4);
+    if (along === 'x') put(concrete, bw, mid, bh / 2, back); else put(concrete, bw, back, bh / 2, mid);
   };
-  const mainFront = -halfW - 3.1, endFront = halfL + 3.3;
+  const mainFront = -halfW - gap, endFront = halfL + gap + 0.2;
   stand('x', mainFront, -1, -halfL - 2, halfL + 2, seatA);
   stand('z', -endFront, -1, -halfW - 1, halfW + 1.5, seatB);
   stand('z', endFront, 1, -halfW - 1, halfW + 1.5, seatB);
@@ -52,10 +54,12 @@ export function buildStands(scene, venue) {
   canopy.castShadow = true;
   scene.add(canopy);
   const beamMat = new THREE.MeshStandardMaterial({ color: 0x555c68, metalness: 0.7, roughness: 0.4 });
-  for (let x = -halfL - 2; x <= halfL + 2.1; x += 6) {
-    const col = new THREE.Mesh(new THREE.BoxGeometry(0.3, roofY, 0.3), beamMat);
-    col.position.set(x, roofY / 2, mainFront - rows * depth - 0.6);
-    scene.add(col);
+  for (let x = -halfL - 2; x <= halfL + 2.1; x += 6) put(beamMat, new THREE.BoxGeometry(0.3, roofY, 0.3), x, roofY / 2, mainFront - rows * depth - 0.6);
+  for (const [mat, gs] of parts) {
+    const m = new THREE.Mesh(mergeGeometries(gs), mat);
+    m.receiveShadow = true;
+    scene.add(m);
+    gs.forEach(g => g.dispose());
   }
   // Roof underside lights
   const strip = new THREE.Mesh(new THREE.BoxGeometry(halfL * 2 + 6, 0.06, 0.25), new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xfff2dc, emissiveIntensity: 3 }));
@@ -107,7 +111,7 @@ export function buildStands(scene, venue) {
       varying vec2 vUv; varying float vTeam, vTone, vLight;
       #include <fog_pars_vertex>
       void main() {
-        vUv = uv; vTeam = aTeam; vTone = aTone; vLight = 0.62 + 0.38 * (1.0 - aRow / 9.0);
+        vUv = uv; vTeam = aTeam; vTone = aTone; vLight = 0.62 + 0.38 * (1.0 - aRow / ${rows.toFixed(1)});
         float c = cos(aFace), s = sin(aFace);
         vec3 p = vec3(position.x * c, position.y * (0.9 + 0.2 * aTone), -position.x * s);
         float bob = abs(sin(uTime * (2.2 + aPhase * 1.6) + aPhase * 6.28)) * 0.06 * (0.3 + uExcite * 2.2);

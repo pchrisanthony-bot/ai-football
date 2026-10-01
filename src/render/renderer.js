@@ -70,6 +70,10 @@ export function createRenderer(container) {
     { name: 'ULTRA', dpr: 1.75, shadows: 4, bloom: true, samples: 4 },
   ];
   const state = { level: -1, lights: [], blobs: [] };
+  // Cast from opposite corners first so shadows stay balanced.
+  const castShadows = () => { const q = QUALITY[Math.max(0, state.level)]; state.lights.forEach((l, i) => { l.castShadow = [0, 3, 1, 2].indexOf(i) < q.shadows; }); };
+  // A venue swap brings new floodlights: they cast only as many shadows as the level allows.
+  const useLights = (lights) => { state.lights = lights; castShadows(); };
   const setQuality = (level) => {
     level = Math.max(0, Math.min(QUALITY.length - 1, level));
     if (level === state.level) return QUALITY[level];
@@ -79,8 +83,7 @@ export function createRenderer(container) {
     renderer.setPixelRatio(pr);
     composer.setPixelRatio(pr);
     renderer.shadowMap.enabled = q.shadows > 0;
-    // cast from opposite corners first so shadows stay balanced
-    state.lights.forEach((l, i) => { l.castShadow = [0, 3, 1, 2].indexOf(i) < q.shadows; });
+    castShadows();
     bloom.enabled = q.bloom;
     for (const rt of [composer.renderTarget1, composer.renderTarget2]) { rt.samples = q.samples; rt.dispose(); }
     for (const b of state.blobs) b.visible = q.shadows === 0;
@@ -98,5 +101,5 @@ export function createRenderer(container) {
   };
   window.addEventListener('resize', onResize);
 
-  return { renderer, scene, camera, composer, bloom, grade, onResize, setQuality, QUALITY, quality: state };
+  return { renderer, scene, camera, composer, bloom, grade, onResize, setQuality, useLights, QUALITY, quality: state };
 }

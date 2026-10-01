@@ -1,5 +1,6 @@
 import { Match } from '../src/sim/match.js';
-import { SIM_DT, COURT, BALL } from '../src/config.js';
+import { SIM_DT, BALL } from '../src/config.js';
+import { PITCH } from '../src/sim/pitch.js';
 import { VARIANTS, setupDrill } from './drill.test.mjs';
 import { bankAim } from '../src/sim/kicks.js';
 import { predictPath, makeBall } from '../src/sim/ball.js';

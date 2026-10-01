@@ -85,7 +85,7 @@ export class Athlete {
   constructor(p, kit) {
     const g = geos();
     this.p = p;
-    const gk = p.role === 'GK';
+    const gk = p.line === 'GK';
     const shirtCol = gk ? kit.gk : kit.shirt;
     const shirtMap = shirtTexture({ ...kit, shirt: shirtCol }, p.number, p.name);
     const C = {
@@ -258,7 +258,7 @@ export class Athlete {
     const cL = Math.cos(w), cR = Math.cos(w + Math.PI);
     const thighAmp = lerp(0.3, 1.0, sp) * moving;
     const kneeAmp = lerp(0.55, 1.9, sp) * moving;
-    const crouch = p.jockey || (p.role === 'GK' && speed < 2.5) ? 0.45 : p.closeControl ? 0.2 : 0;
+    const crouch = p.jockey || (p.line === 'GK' && speed < 2.5) ? 0.45 : p.closeControl ? 0.2 : 0;
 
     // Lower body turns toward travel, upper body keeps the facing.
     let hipYaw = 0;
@@ -294,7 +294,7 @@ export class Athlete {
     this.set('armR', 'z', -0.1 - crouch * 0.5 - (1 - moving) * 0.05);
     this.set('foreL', 'x', -lerp(0.25, 1.65, smooth(sp)) - crouch * 0.4);
     this.set('foreR', 'x', -lerp(0.25, 1.65, smooth(sp)) - crouch * 0.4);
-    if (p.role === 'GK' && speed < 3 && !(ball.owner === p)) {
+    if (p.line === 'GK' && speed < 3 && !(ball.owner === p)) {
       // keeper ready: hands up and out
       this.set('armL', 'x', -0.55); this.set('armR', 'x', -0.55);
       this.set('armL', 'z', 0.55); this.set('armR', 'z', -0.55);

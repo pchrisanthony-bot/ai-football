@@ -1,0 +1,38 @@
+{
+ "frames": 900,
+ "fps": 60,
+ "median": 16.7,
+ "p95": 16.9,
+ "p99": 17.2,
+ "max": 21.3,
+ "spikes33": 0,
+ "spikes50": 0,
+ "sections": {
+  "ai": 0.21,
+  "players": 0.087,
+  "ball": 0.037,
+  "sim": 0.392,
+  "view": 0.696,
+  "update-total": 1.237,
+  "scene": 0.044,
+  "hud": 0.304,
+  "render-submit": 1.768,
+  "frames": 901
+ },
+ "allocMBperSec": 6.07,
+ "gcs": 12,
+ "quality": 0,
+ "players": 14,
+ "renderer": {
+  "frame": 5589,
+  "calls": 1,
+  "triangles": 1,
+  "points": 0,
+  "lines": 0
+ },
+ "heapMB": {
+  "start": 32.8,
+  "end": 31.6
+ },
+ "errors": []
+}

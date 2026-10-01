@@ -10,7 +10,8 @@ import { FX } from './render/fx.js';
 import { CameraRig } from './render/camera.js';
 import { MatchView } from './render/matchview.js';
 import { Match } from './sim/match.js';
-import { SIM_DT, COURT, setSurface } from './config.js';
+import { SIM_DT, setSurface } from './config.js';
+import { PITCH } from './sim/pitch.js';
 import { Rain } from './render/weather.js';
 import { Input } from './input/input.js';
 import { TouchControls, isTouchDevice } from './input/touch.js';
@@ -18,9 +19,12 @@ import { HumanController } from './game/human.js';
 import { Audio } from './audio/audio.js';
 import { HUD } from './ui/hud.js';
 import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel, lineupsPanel } from './ui/menus.js';
-import { TEAMS } from './sim/players.js';
-import { DRILL_VARIANTS, setupDrill as setupDrillCore } from './game/drill.js';
+import { TEAMS } from './sim/squads.js';
+import { FORMATS, FORMAT_IDS } from './sim/formats.js';
+import { drillVariants, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
+import { prof } from './util/profiler.js';
+import { makeTelemetry, telemetryText } from './game/telemetry.js';
 
 const view = document.getElementById('view');
 const ui = document.getElementById('ui');
@@ -33,20 +37,25 @@ const VENUES = [
   { label: 'ROOFTOP CAGE', kind: 'rooftop', surface: 'court', sub: 'NIGHT · ASPHALT' },
   { label: 'STADIUM CAGE', kind: 'arena', surface: 'turf', sub: 'FLOODLIT · TURF · CROWD' },
 ];
+// Open pitches are played in the stadium.
+const OPEN_VENUES = [{ label: 'STADIUM', kind: 'arena', surface: 'turf', sub: 'FLOODLIT · TURF · CROWD' }];
+const venuesFor = f => (FORMATS[FORMAT_IDS[f]].pitch === 'cage5' ? VENUES : OPEN_VENUES);
 const WEATHER = [{ label: 'CLEAR' }, { label: 'RAIN' }];
 const venues = {};
 let venue = null;
+// A venue is built for the live pitch (PITCH), so each (kind, pitch) pair is cached.
 function useVenue(kind) {
-  if (!venues[kind]) {
+  const key = `${kind}:${PITCH.id}`;
+  if (!venues[key]) {
     const root = new THREE.Group();
     R.scene.add(root);
-    venues[kind] = buildVenue(root, R.renderer, { kind });
-    venues[kind].root = root;
+    venues[key] = buildVenue(root, R.renderer, { kind });
+    venues[key].root = root;
   }
-  for (const k in venues) venues[k].root.visible = k === kind;
-  venue = venues[kind];
+  for (const k in venues) venues[k].root.visible = k === key;
+  venue = venues[key];
   R.scene.fog = venue.fog;
-    if (R.quality.level >= 0) R.setQuality(R.quality.level);
+  R.useLights(venue.lights);
 }
 useVenue('rooftop');
 const rain = new Rain(R.scene);
@@ -69,9 +78,8 @@ const hud = new HUD(ui);
 const screens = document.createElement('div');
 ui.appendChild(screens);
 
-const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0 };
+const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0 };
 const GFX = ['AUTO', 'LOW', 'MEDIUM', 'HIGH', 'ULTRA'];
-R.quality.lights = venue.lights;
 
 // ---- performance governor: pick the best quality that holds ~60 fps on this machine.
 const perf = { acc: [], cap: 3 };
@@ -106,9 +114,12 @@ function clearScreens() { G.menu?.destroy(); G.menu = null; screens.innerHTML = 
 function addScreen(cls = 'screen') { const el = document.createElement('div'); el.className = cls; screens.appendChild(el); return el; }
 function nav() { audio.ui(); }
 
-function startMatchObject(opts, humanTeam) {
+// cond: [venue kind, surface, wet] — applied once the match has set the live pitch.
+function startMatchObject(opts, humanTeam, cond) {
   G.mview?.dispose();
   const m = new Match({ humanTeam, ...opts });
+  applyConditions(...cond);
+  rig.setFraming(m.cfg.camera);
   G.match = m;
   G.mview = new MatchView({ scene: R.scene, renderer: R.renderer, venue, fx, audio, rig, hud }, m);
   G.human = humanTeam == null ? null : new HumanController(m, humanTeam, input);
@@ -122,12 +133,11 @@ function startMatchObject(opts, humanTeam) {
 function toTitle() {
   clearScreens();
   G.state = 'title'; G.stateT = 0; G.spectate = false; G.drill = null;
-  applyConditions('rooftop', 'court', false);
   // Attract mode: two AI sides play behind the menu.
   const ids = TEAM_IDS;
   const hi = Math.floor(Math.random() * ids.length);
   const ai = (hi + 1 + Math.floor(Math.random() * (ids.length - 1))) % ids.length;
-  startMatchObject({ home: ids[hi], away: ids[ai], seconds: 600, difficulty: 0.7, seed: Math.floor(Math.random() * 1e6) }, null);
+  startMatchObject({ home: ids[hi], away: ids[ai], seconds: 600, difficulty: 0.7, seed: Math.floor(Math.random() * 1e6) }, null, ['rooftop', 'court', false]);
   hud.hide();
   const scr = addScreen('screen');
   titleScreen(scr);
@@ -162,12 +172,23 @@ function toSetup(spectate = false) {
   G.spectate = spectate;
   const scr = addScreen('screen dim');
   const teamOpts = TEAM_IDS.map(id => ({ label: TEAMS[id].name }));
+  const fmOpts = f => FORMATS[FORMAT_IDS[f]].formations.map(id => ({ label: id }));
+  // The format decides which formations and venues there are to choose from.
+  const formationItem = { label: 'FORMATION', options: fmOpts(settings.format), value: settings.formation, onChange: v => settings.formation = v };
+  const venueItem = { label: 'VENUE', options: venuesFor(settings.format), value: settings.venue, onChange: v => settings.venue = v };
   const items = [
     { label: spectate ? 'HOME' : 'YOUR TEAM', options: teamOpts, value: settings.home, onChange: v => settings.home = v, swatch: v => TEAMS[TEAM_IDS[v]].kit.shirt },
     { label: 'OPPONENT', options: teamOpts, value: settings.away, onChange: v => settings.away = v, swatch: v => TEAMS[TEAM_IDS[v]].kit.shirt },
+    { label: 'FORMAT', options: FORMAT_IDS.map(id => ({ label: FORMATS[id].label })), value: settings.format, onChange: v => {
+      settings.format = v; settings.formation = 0; settings.venue = 0;
+      formationItem.options = fmOpts(v); formationItem.value = 0;
+      venueItem.options = venuesFor(v); venueItem.value = 0;
+      G.menu.render();
+    } },
+    formationItem,
     { label: 'MATCH', options: MODES, value: settings.mode, onChange: v => settings.mode = v },
     { label: 'AI LEVEL', options: DIFFS, value: settings.diff, onChange: v => settings.diff = v },
-    { label: 'VENUE', options: VENUES, value: settings.venue, onChange: v => settings.venue = v },
+    venueItem,
     { label: 'WEATHER', options: WEATHER, value: settings.weather, onChange: v => settings.weather = v },
     { label: 'GRAPHICS', options: GFX, value: settings.gfx, onChange: v => { settings.gfx = v; applyGfx(); } },
     { label: spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: () => toLineups() },
@@ -180,12 +201,14 @@ function toSetup(spectate = false) {
 function newMatch() {
   if (settings.home === settings.away) settings.away = (settings.away + 1) % TEAM_IDS.length;
   const md = MODES[settings.mode];
-  const V = VENUES[settings.venue];
-  applyConditions(V.kind, V.surface, settings.weather === 1);
+  const V = venuesFor(settings.format)[settings.venue];
+  const F = FORMATS[FORMAT_IDS[settings.format]];
+  const seed = Math.floor(Math.random() * 1e6);
   return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
-    difficulty: DIFFS[settings.diff].v, seed: Math.floor(Math.random() * 1e6),
-  }, G.spectate ? null : 0);
+    difficulty: DIFFS[settings.diff].v, seed,
+    format: FORMAT_IDS[settings.format], formations: [F.formations[settings.formation], F.formations[seed % F.formations.length]],
+  }, G.spectate ? null : 0, [V.kind, V.surface, settings.weather === 1]);
 }
 
 // Pre-match line-ups (FTS style): both squads, archetypes, ratings, kits.
@@ -195,7 +218,7 @@ function toLineups() {
   hud.hide();
   G.state = 'lineups'; G.stateT = 0;
   const scr = addScreen('screen dim');
-  const panel = lineupsPanel(m, `${VENUES[settings.venue].label}${settings.weather ? ' · RAIN' : ''} · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
+  const panel = lineupsPanel(m, `${m.cfg.label} · ${venuesFor(settings.format)[settings.venue].label}${settings.weather ? ' · RAIN' : ''} · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
   G.menu = new Menu(scr, {
     cls: 'center wide', title: G.spectate ? 'WATCH AI' : 'LINE-UPS', subtitle: `${m.teams[0].def.name}  vs  ${m.teams[1].def.name}`,
     items: [{ label: G.spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: beginMatch }, { label: 'BACK', action: () => toSetup(G.spectate) }], side: panel,
@@ -364,8 +387,7 @@ function leaveDrill() {
 // ------------------------------------------------------------------ trick-shot drill
 function toDrill() {
   clearScreens();
-  applyConditions('rooftop', 'court', false);
-  startMatchObject({ home: 'cage', away: 'rooftop', mode: 'drill', seconds: 99999, difficulty: 0.6, seed: 7 }, 0);
+  startMatchObject({ home: 'cage', away: 'rooftop', mode: 'drill', seconds: 99999, difficulty: 0.6, seed: 7 }, 0, ['rooftop', 'court', false]);
   hud.show(); hud.setDebug(false); hud.setSpectate(false);
   G.drill = { attempts: 0, goals: 0, cage: 0, shotT: null, panel: null };
   const panel = document.createElement('div');
@@ -376,12 +398,12 @@ function toDrill() {
   G.state = 'match';
   audio.music(false);
   audio.radio(true);
-  hud.big('TRICK-SHOT DRILL', 'Lane blocked — hold K and aim at the FAR wall: it comes back behind the keeper', 3200);
+  hud.notify('TRICK-SHOT DRILL', 'info', { sub: TOUCH ? 'Lane blocked — hold SHOOT and aim at the FAR wall: it comes back behind the keeper' : 'Lane blocked — hold K and aim at the FAR wall: it comes back behind the keeper', dur: 4 });
 }
 
 function setupDrill() {
   const m = G.match, d = G.drill;
-  const v = DRILL_VARIANTS[d.attempts % DRILL_VARIANTS.length];
+  const vs = drillVariants(), v = vs[d.attempts % vs.length];
   const { shooter } = setupDrillCore(m, v);
   m.human = null;                 // reset clears every human flag; re-register the shooter
   G.human.setHuman(shooter);
@@ -422,6 +444,8 @@ function frame(now) {
 // even when the tab is hidden: window.__tick(1/60, n).
 function tick(dt) {
   G.t += dt; G.stateT += dt;
+  prof.frame();
+  let t0 = prof.now();
   input.update(dt);
   if (input.anyPressed()) audio.init();
 
@@ -452,7 +476,7 @@ function tick(dt) {
       if (G.stateT > 2.4 || (G.stateT > 0.3 && input.anyPressed())) {
         G.state = 'match';
         rig.focus.set(m.ball.x, 0, m.ball.z); rig.fVel.set(0, 0, 0);
-        hud.big('KICK OFF', `${m.teams[0].def.name} vs ${m.teams[1].def.name}`, 1100);
+        hud.notify('KICK OFF', 'restart', { sub: `${m.teams[0].def.name} vs ${m.teams[1].def.name}` });
       }
       break;
     }
@@ -467,7 +491,7 @@ function tick(dt) {
       G.human?.update(simDt);
       const events = stepMatch(simDt, false);
       if (G.drill) drillTick(dt, events);
-      rig.broadcast(dt, m.ball, m.human, spread(m));
+      rig.broadcast(dt, m.ball, m.human, rig.playSpread(m));
       if (m.phase === 'fulltime' && !G.drill) toFullTime();
       break;
     }
@@ -488,7 +512,7 @@ function tick(dt) {
     case 'paused':
       G.menu?.handle(input);
       if (input.pressed('pause')) { audio.uiBack(); resume(); }
-      rig.broadcast(0, m.ball, m.human, spread(m));
+      rig.broadcast(0, m.ball, m.human, rig.playSpread(m));
       break;
     case 'fulltime':
       stepMatch(dt, false);
@@ -500,7 +524,7 @@ function tick(dt) {
   // atmosphere
   if (m && (G.state === 'match' || G.state === 'intro')) {
     const b = m.ball;
-    const nearGoal = Math.max(0, (Math.abs(b.x) - 9) / 7);
+    const nearGoal = Math.max(0, (Math.abs(b.x) - (PITCH.halfL - 7)) / 7);
     const crowdBase = venue.kind === 'arena' ? 0.16 : 0.05;   // a stadium crowd vs a few mates on the roof
     crowdLevel += ((crowdBase + nearGoal * 0.1) - crowdLevel) * dt * 2;
     audio.setCrowd(crowdLevel);
@@ -512,7 +536,7 @@ function tick(dt) {
   if (gbTeam) gbU.uGBColor.value.set(gbTeam.def.kit.trim);
 
   if (input.touch) {
-    const live = G.state === 'match' && m && (m.phase === 'play' || m.phase === 'kickoff');
+    const live = G.state === 'match' && m && (m.phase === 'play' || m.phase === 'restart');
     input.touch.setVisible(!!live && !!G.human, { drill: !!G.drill });
     if (live && m.human) {
       const o = m.ball.owner;
@@ -526,19 +550,20 @@ function tick(dt) {
   }
   rig.zoomBias = (innerHeight < 520 ? -3 : 0) - (G.slow > 0 && G.state === 'match' ? 4 : 0);
 
+  prof.add('update-total', t0);   // includes sim + view
+  t0 = prof.now();
   venue.setBeat(audio.beatLevel());
   venue.update(G.t, R.camera);
   rain.update(dt, rig.focus);
   fx.update(dt);
   rig.apply(dt);
+  prof.add('scene', t0);
+  t0 = prof.now();
   if (G.match && !['title', 'setup', 'controls', 'boards', 'tag', 'lineups'].includes(G.state)) hud.update(dt, G.human);
+  prof.add('hud', t0);
+  t0 = prof.now();
   R.composer.render();
-}
-
-function spread(m) {
-  let minX = Infinity, maxX = -Infinity;
-  for (const p of m.players) if (p.active) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); }
-  return maxX - minX;
+  prof.add('render-submit', t0);
 }
 
 // Advance the sim at a fixed 120 Hz and render-side view; returns this frame's events.
@@ -546,14 +571,17 @@ function stepMatch(dt, quiet) {
   const m = G.match;
   G.acc += dt;
   let n = 0;
+  let t0 = prof.now();
   while (G.acc >= SIM_DT && n < 12) { m.step(SIM_DT); G.acc -= SIM_DT; n++; }
   if (n === 12) G.acc = 0;
+  prof.add('sim', t0);
   const events = m.drainEvents();
   if (quiet) {
     for (const e of events) if (e.type === 'goalDone') m.resumeAfterGoal();
     G.mview.update(dt, null);
     return events;
   }
+  t0 = prof.now();
   G.mview.handleEvents(events, hud);
   for (const e of events) {
     if (e.type === 'gamebreaker') G.slow = 0.55;
@@ -565,6 +593,7 @@ function stepMatch(dt, quiet) {
     }
   }
   G.mview.update(dt, G.human);
+  prof.add('view', t0);
   return events;
 }
 
@@ -583,6 +612,10 @@ R.renderer.compile(R.scene, R.camera);
 requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
 setTimeout(() => { loading.style.opacity = 0; setTimeout(() => loading.remove(), 700); }, 400);
 window.__G = G;
+window.__prof = prof;
+window.__telemetry = makeTelemetry(() => G.match, rig);
+hud.setTelemetry(window.__telemetry, telemetryText);
+if (/[?&]profile\b/.test(location.search)) prof.enable();
 window.__R = R; window.__perf = perf;
 window.__tick = (dt = 1 / 60, n = 1) => { G.manual = true; for (let i = 0; i < n; i++) tick(dt); };
 window.__auto = () => { G.manual = false; };

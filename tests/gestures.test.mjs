@@ -3,7 +3,10 @@
 import { Match } from '../src/sim/match.js';
 import { SIM_DT } from '../src/config.js';
 import { HumanController } from '../src/game/human.js';
-import { DRILL_VARIANTS, setupDrill } from '../src/game/drill.js';
+import { drillVariants, setupDrill } from '../src/game/drill.js';
+
+// The home side's right-sided ala: the team-mate the passing gestures aim at.
+const rightAla = m => m.players.find(p => p.team === 0 && p.role === 'ALA' && p.form.y > 0.5);
 
 const FRAME = 1 / 60;
 
@@ -30,9 +33,9 @@ class FakeInput {
 
 function scene({ mate = true, defenderAhead = false } = {}) {
   const m = new Match({ humanTeam: 0, mode: 'drill', seconds: 9999, seed: 3, difficulty: 0.6 });
-  const { shooter, def } = setupDrill(m, DRILL_VARIANTS[0]);
+  const { shooter, def } = setupDrill(m, drillVariants()[0]);
   if (mate) {
-    const r = m.players.find(p => p.team === 0 && p.slot === 3);
+    const r = rightAla(m);
     Object.assign(r, { active: true, x: shooter.x + 7, z: shooter.z - 3, frozen: true });
   }
   if (defenderAhead) {
@@ -76,7 +79,7 @@ export default function () {
   check('SHOOT swipe ↓ = finesse curl', kf && kf.finesse);
 
   // PASS: tap vs swipe-right driven vs double-tap dink
-  const toMate = (s) => { const r = s.m.players.find(p => p.team === 0 && p.slot === 3); const dx = r.x - s.shooter.x, dz = r.z - s.shooter.z, d = Math.hypot(dx, dz); return { x: dx / d, y: -dz / d }; };
+  const toMate = (s) => { const r = rightAla(s.m); const dx = r.x - s.shooter.x, dz = r.z - s.shooter.z, d = Math.hypot(dx, dz); return { x: dx / d, y: -dz / d }; };
   const pass = scene();
   tap(pass, 'pass', { stick: toMate(pass) }); pass.run(30);
   const drive = scene();

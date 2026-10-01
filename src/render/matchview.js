@@ -3,10 +3,12 @@ import * as THREE from 'three';
 import { Athlete } from './athlete.js';
 import { BallView } from './ballview.js';
 import { predictPath, copyBall } from '../sim/ball.js';
-import { COURT, BALL } from '../config.js';
+import { BALL } from '../config.js';
+import { PITCH } from '../sim/pitch.js';
 import { radialTexture } from './textures.js';
 
 const REPLAY_SECS = 7;
+const RESTART_LABEL = { THROW_IN: 'THROW-IN', CORNER: 'CORNER', GOAL_KICK: 'GOAL KICK' };
 
 export class MatchView {
   constructor(ctx, match) {
@@ -193,7 +195,7 @@ export class MatchView {
         }
         case 'post':
           fx.spark(e.x, e.y, e.z, 0, 0, Math.min(1, e.speed / 15), [1, 1, 1]);
-          rig.shake(0.2, 0.3); audio.post(e.speed); hud.callout(e.kind === 'bar' ? 'OFF THE BAR!' : 'OFF THE POST!', '#ffffff', 1.2);
+          rig.shake(0.2, 0.3); audio.post(e.speed); hud.notify(e.kind === 'bar' ? 'OFF THE BAR!' : 'OFF THE POST!', 'frame', { color: '#ffffff' });
           break;
         case 'net': venue.nets.hit(e.x, e.y, e.z, Math.min(0.35, e.speed * 0.03)); audio.net(); break;
         case 'bounce': if (e.speed > 1.5) audio.bounce(e.speed); break;
@@ -207,7 +209,7 @@ export class MatchView {
           break;
         }
         case 'touch': this.athletes.get(e.pid)?.touch(e.power); audio.touch(e.power); break;
-        case 'save': audio.save(e.kind); if (e.kind === 'parry') fx.puff(e.x, e.z, 6, 0.5); hud.callout(e.kind === 'catch' ? 'SAVED!' : 'PARRIED!', '#9fe3ff', 1.1); break;
+        case 'save': audio.save(e.kind); if (e.kind === 'parry') fx.puff(e.x, e.z, 6, 0.5); hud.notify(e.kind === 'catch' ? 'SAVED!' : 'PARRIED!', 'save', { color: '#9fe3ff' }); break;
         case 'tackle': audio.tackle(e.ok); if (e.slide) { audio.slide(); fx.puff(e.x, e.z, 10, 0.6); } break;
         case 'trip': audio.tackle(true); break;
         case 'header': audio.kick(0.4); break;
@@ -215,9 +217,16 @@ export class MatchView {
         case 'panna': audio.crowdOoh(1.2); break;
         case 'gamebreaker': audio.gamebreaker(); hud.gamebreaker(e.team); rig.shake(0.3, 0.6); venue.react?.('gb', m.teams[e.team].def.kit.trim); break;
         case 'gbEnd': venue.react?.('gbEnd'); break;
-        case 'gbReady': audio.gbReady(); hud.callout(m.opts.humanTeam === e.team ? 'GAMEBREAKER READY' : 'THEY HAVE A GAMEBREAKER', '#FFD400', 1.4); break;
+        case 'gbReady': audio.gbReady(); hud.notify(m.opts.humanTeam === e.team ? 'GAMEBREAKER READY' : 'THEY HAVE A GAMEBREAKER', 'alert', { color: '#FFD400' }); break;
         case 'gbStrike': audio.gbStrike(); rig.shake(0.2, 0.5); break;
         case 'whistle': audio.whistle(e.kind === 'end'); break;
+        case 'board': audio.fence(e.speed, true); break;
+        case 'restart': {
+          const T = m.teams[e.team], mine = m.opts.humanTeam === e.team && e.kind !== 'GOAL_KICK';
+          hud.notify(RESTART_LABEL[e.kind], 'restart', { color: T.def.kit.shirt, sub: mine ? 'AIM · PASS SHORT · LOB LONG' : T.def.name });
+          break;
+        }
+        case 'restartSet': rig.cut(e.x, e.z); break;
         case 'goal': {
           audio.goal();
           venue.react?.('goal', m.teams[e.team].def.kit.shirt);
@@ -225,7 +234,7 @@ export class MatchView {
           hud.flash(0.35);
           const T = m.teams[e.team];
           const kit = T.def.kit;
-          fx.confetti(T.dir * COURT.halfL * 0.8, 0, [kit.shirt, kit.trim, '#ffffff']);
+          fx.confetti(T.dir * PITCH.halfL * 0.8, 0, [kit.shirt, kit.trim, '#ffffff']);
           this.goalMark = { frame: this.frames.length, team: e.team, info: e };
           break;
         }
@@ -257,7 +266,7 @@ export class MatchView {
     while (i > 0 && back < 4.5) { back += this.frames[i - 1].dt; i--; }
     let j = this.goalMark.frame, fwd = 0;
     while (j < this.frames.length - 1 && fwd < 1.5) { fwd += this.frames[j].dt; j++; }
-    this.replay = { i, start: i, end: j, acc: 0, speed: 0.75, cam: 0, goalX: this.m.teams[this.goalMark.team].dir * COURT.halfL };
+    this.replay = { i, start: i, end: j, acc: 0, speed: 0.75, cam: 0, goalX: this.m.teams[this.goalMark.team].dir * PITCH.halfL };
     return true;
   }
 

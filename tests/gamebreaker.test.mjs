@@ -43,8 +43,8 @@ export default function () {
       for (const [sx, sz] of spots) for (let seed = 1; seed <= 3; seed++) {
         const m = new Match({ humanTeam: 0, mode: 'drill', seconds: 9999, seed, difficulty: 0.6 });
         m.phase = 'play';
+        const s = m.kickTaker(0), gk = m.keeper(1);
         for (const p of m.players) p.active = false;
-        const s = m.players.find(p => p.team === 0 && p.slot === 4), gk = m.keeper(1) || m.players.find(p => p.team === 1 && p.role === 'GK');
         Object.assign(s, { active: true, x: sx, z: sz, human: true }); m.human = s;
         s.facing = s.heading = Math.atan2(-sz, 16 - sx);
         Object.assign(gk, { active: true, x: 15.1, z: sz * 0.2 });
