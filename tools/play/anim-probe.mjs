@@ -32,7 +32,8 @@ const record = (frames) => H.eval((frames) => {
   for (let i = 0; i < frames; i++) {
     __tick(1 / 60, 1);
     const cur = Array.from(A.out || A.cur);
-    out.push({ speed: p.speed, yaw: A.root.rotation.y, Lh: pt('footL', -0.05), Lb: pt('footL', 0.13), Rh: pt('footR', -0.05), Rb: pt('footR', 0.13), pose: cur, act: p.action ? p.action.type : null });
+    const hy = V.set(0, 0, 0).applyMatrix4(A.J.hips.matrixWorld).y;
+    out.push({ speed: p.speed, yaw: A.root.rotation.y, Lh: pt('footL', -0.05), Lb: pt('footL', 0.13), Rh: pt('footR', -0.05), Rb: pt('footR', 0.13), hy, pose: cur, act: p.action ? p.action.type : null });
     prev = cur;
   }
   return out;
@@ -62,6 +63,38 @@ function analyse(rows) {
     bodyDist += b.speed * dt;
   }
   const avgSpeed = bodyDist / ((rows.length - 1) * dt);
+  // Running form, to hold against the reference: the heel's lift behind in the swing, the
+  // knee fold, hip height, the elbows, the lean and bank, and how far the arm swing lags
+  // the legs (the arms must swing exactly opposite the legs).
+  const ch = n => CH.indexOf(n), col = n => rows.map(r => r.pose[ch(n)]);
+  const peaks = ys => { const out = []; for (let i = 1; i < ys.length - 1; i++) if (ys[i] > 0.08 && ys[i] >= ys[i - 1] && ys[i] > ys[i + 1]) out.push(ys[i]); return out; };
+  const hp = [...peaks(rows.map(r => r.Lh[1])), ...peaks(rows.map(r => r.Rh[1]))];
+  const pct90 = a => { const s2 = a.slice().sort((x, y) => x - y); return s2[Math.floor(s2.length * 0.9)]; };
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const arm = col('armL.x'), leg = col('thighL.x');
+  let lag = null, armSign = null;
+  if (avgSpeed > 2) {
+    const z = a => { const m = mean(a); const sd = Math.sqrt(mean(a.map(v => (v - m) ** 2))) || 1; return a.map(v => (v - m) / sd); };
+    const A2 = z(arm), L2 = z(leg);
+    let best = 0, bk = 0;
+    for (let k = -12; k <= 12; k++) {
+      let c = 0, n = 0;
+      for (let i = Math.max(0, -k); i < A2.length && i + k < L2.length; i++) { if (i + k < 0) continue; c += A2[i] * L2[i + k]; n++; }
+      c /= n; if (Math.abs(c) > Math.abs(best)) { best = c; bk = k; }
+    }
+    lag = Math.round(-bk * 1000 / 60);   // ms the arm swing trails the leg swing
+    armSign = best < 0 ? 'opposite' : 'with';   // the left arm against the left thigh
+  }
+  const deg = r => r == null ? null : +(r * 180 / Math.PI).toFixed(1);
+  const form = {
+    heelPeak: hp.length ? +mean(hp).toFixed(2) : null,
+    kneeSwing: deg((pct90(col('shinL.x')) + pct90(col('shinR.x'))) / 2),   // the knee's fold in the swing
+    hipY: +mean(rows.map(r => r.hy)).toFixed(3),
+    elbow: deg(-mean(col('foreL.x'))),
+    lean: deg(mean(col('body.x')) + mean(col('spine.x'))),
+    bank: deg(Math.max(...col('body.z').map(Math.abs))),
+    armLagMs: lag, armSign,
+  };
   return {
     bodySpeed: +avgSpeed.toFixed(2),
     footContact: +(contactT / ((rows.length - 1) * dt) / 4).toFixed(2),          // share of time a sole point is on the ground
@@ -71,6 +104,7 @@ function analyse(rows) {
     sink: +(-Math.min(0, minY)).toFixed(3),                                           // m the lowest foot goes under the pitch
     float: +maxGroundGap.toFixed(3),                                                  // m the lower foot hangs above it (no action)
     yawSnaps: yawSnap, popMaxRadS: +popMax.toFixed(1), popAt,
+    form,
   };
 }
 

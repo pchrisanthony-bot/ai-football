@@ -47,6 +47,11 @@ const LEG = Object.fromEntries(['L', 'R'].map(f => [f, {
   shin: CH_INDEX[`shin${f}.x`], foot: CH_INDEX[`foot${f}.x`], sx: f === 'L' ? 1 : -1,
 }]));
 const HIPS_Y = CH_INDEX['hips.y'], HIPS_PY = CH_INDEX['hips.py'], BODY_X = CH_INDEX['body.x'];
+// The gait's rhythm — arm swing, hip and shoulder twist, the bob — is a layer added on top
+// of the sprung pose, in exact time with the feet (through the springs it trailed the legs
+// by a quarter of a stride). An action that poses one of these joints takes it over.
+const CYC = ['armL.x', 'armR.x', 'hips.y', 'spine.y', 'hips.py'].map(n => CH_INDEX[n]);
+const ARM_L = CH_INDEX['armL.x'], ARM_R = CH_INDEX['armR.x'];
 
 // ------------------------------------------------------------------ shared geometry
 const G = {};
@@ -203,7 +208,12 @@ export class Athlete {
     this.cur = new Float32Array(CHANNELS.length);
     this.vel = new Float32Array(CHANNELS.length);
     this.tgt = new Float32Array(CHANNELS.length);
-    this.out = new Float32Array(CHANNELS.length);   // the pose shown: springs + leg IK
+    this.out = new Float32Array(CHANNELS.length);   // the pose shown: springs + rhythm + leg IK
+    this.cyc = new Float32Array(CHANNELS.length);   // the gait's rhythm layer (see CYC)
+    this.cycW = new Float32Array(CHANNELS.length).fill(1);
+    this.base = new Float32Array(CHANNELS.length);  // the locomotion pose, before any action
+    this.accS = 0;                                   // smoothed forward acceleration (m/s²)
+    this.relax = { L: 0, R: 0 };                     // how far each foot hangs off the shin (in the air)
     this.gait = new Gait();
     this.ikW = { L: 1, R: 1 };
     this.hipDrop = 0;                                // m (local) the hips sink so a planted leg reaches
@@ -221,6 +231,7 @@ export class Athlete {
   }
 
   set(j, axis, v) { this.tgt[CH_INDEX[j + '.' + axis]] = v; }
+  cy(j, axis, v) { this.cyc[CH_INDEX[j + '.' + axis]] = v; }
   add(j, axis, v) { this.tgt[CH_INDEX[j + '.' + axis]] += v; }
   get(j, axis) { return this.tgt[CH_INDEX[j + '.' + axis]]; }
 
@@ -262,17 +273,24 @@ export class Athlete {
     this.lastHeading = p.heading;
     const acc = (speed - this.lastSpeed) / Math.max(dt, 1e-3);
     this.lastSpeed = speed;
-    this.lean += (clamp(-dh * speed * 0.035, -0.35, 0.35) - this.lean) * (1 - Math.exp(-8 * dt));
-    this.pitch += (clamp(acc * 0.012, -0.15, 0.2) - this.pitch) * (1 - Math.exp(-6 * dt));
+    this.accS += (acc - this.accS) * (1 - Math.exp(-6 * dt));
+    // Banking: a runner on a curve leans in from the feet, tan θ = v·ω / g (a share of it —
+    // he also turns his feet in), eased in and out.
+    const bank = Math.atan(speed * dh / 9.81) * 0.75;
+    this.lean += (clamp(-bank, -0.42, 0.42) - this.lean) * (1 - Math.exp(-8 * dt));
+    // Weight: he leans into a burst of acceleration and sits back against braking.
+    this.pitch += (clamp(this.accS * 0.012, -0.15, 0.2) - this.pitch) * (1 - Math.exp(-6 * dt));
 
-    this.tgt.fill(0);
+    this.tgt.fill(0); this.cyc.fill(0);
     this.locomotion(speed, rel, back, p, match, ball);
+    this.base.set(this.tgt);
     if (this.touchT < 0.2) { this.touchT += dt; this.touchPose(); }
     if (a) this.actionPose(a, p, ball, match);
     else if (ball.owner === p && ball.inHands) this.holdPose();
 
-    // ---- springs (inertialized blend toward the target pose)
-    const omega = a ? 34 : 24;
+    // ---- springs (inertialized blend toward the target pose). Slowing down, the body
+    // eases out of the run more gently than it goes into one (inertia).
+    const omega = a ? 34 : this.accS < -3 ? 12 : 24;     // settles (95%) in ~0.2 s, ~0.4 s when braking
     for (let i = 0; i < this.cur.length; i++) {
       const x = this.cur[i], v = this.vel[i], tg = this.tgt[i];
       const f = 1 + 2 * dt * omega, oo = omega * omega, hoo = dt * oo, hhoo = dt * hoo, di = 1 / (f + hhoo);
@@ -280,6 +298,12 @@ export class Athlete {
       this.vel[i] = (v + hoo * (tg - x)) * di;
     }
     this.out.set(this.cur);
+    // the rhythm layer on top, in step with the feet (eased off joints an action has taken)
+    const kc = 1 - Math.exp(-dt * 14);
+    for (const i of CYC) {
+      this.cycW[i] += ((this.tgt[i] !== this.base[i] ? 0 : 1) - this.cycW[i]) * kc;
+      this.out[i] += this.cyc[i] * this.cycW[i];
+    }
     this.plantLegs(dt, a, ball);
   }
 
@@ -358,8 +382,13 @@ export class Athlete {
       const knee = Math.PI - Math.acos(clamp((THIGH * THIGH + SHIN * SHIN - D * D) / (2 * THIGH * SHIN), -1, 1));
       const alpha = Math.acos(clamp((THIGH * THIGH + D * D - SHIN * SHIN) / (2 * THIGH * D), -1, 1));
       const thX = Math.atan2(-dz, r) - alpha;
-      // the foot: flat on the pitch (heel up late in stance, toe up for the landing)
-      const footX = t.pitch - (out[BODY_X] + thX + knee);
+      // the foot: flat on the pitch (heel up late in stance, toe up for the landing); in
+      // the air it hangs off the shin, toes pointed after the push-off, until it reaches
+      // for the landing
+      let footX = t.pitch - (out[BODY_X] + thX + knee);
+      const rw = t.planted ? 0 : 0.85 * Math.sin(Math.PI * clamp((t.s || 0) / 0.75, 0, 1));
+      this.relax[f] += (rw - this.relax[f]) * (1 - Math.exp(-dt * 30));   // (eased: a swing cut short by a stop doesn't pop)
+      footX += (0.3 - footX) * this.relax[f];
       out[L.thighX] += (thX - out[L.thighX]) * wf;
       out[L.thighZ] += (thZ - out[L.thighZ]) * wf;
       out[L.thighY] += (0 - out[L.thighY]) * wf;
@@ -386,6 +415,9 @@ export class Athlete {
     const moving = smooth(clamp(speed / 1.2, 0, 1));
     const w = this.phase * TAU + Math.PI / 2;     // sin(w) = 1: the left leg forward, at its touchdown
     const sL = Math.sin(w), sR = Math.sin(w + Math.PI);
+    // The arms and the hip/shoulder twist peak with the thighs, which reach furthest just
+    // before touchdown (late swing), not at it.
+    const wa = w + TAU * 0.15, aL = Math.sin(wa), aR = Math.sin(wa + Math.PI);
     const cL = Math.cos(w), cR = Math.cos(w + Math.PI);
     const thighAmp = lerp(0.3, 1.0, sp) * moving;
     const kneeAmp = lerp(0.55, 1.9, sp) * moving;
@@ -395,8 +427,8 @@ export class Athlete {
     let hipYaw = 0;
     if (speed > 0.6) hipYaw = back ? wrapAngle(rel - Math.PI) : rel;
     hipYaw = clamp(hipYaw, -1.2, 1.2) * moving * (crouch ? 0.35 : 1);   // a jockey / keeper shuffles square
-    this.set('hips', 'y', hipYaw + 0.12 * sp * sL);
-    this.set('spine', 'y', -hipYaw * 0.85 - 0.18 * sp * sL);
+    this.set('hips', 'y', hipYaw); this.cy('hips', 'y', 0.12 * sp * aL);
+    this.set('spine', 'y', -hipYaw * 0.85); this.cy('spine', 'y', -0.18 * sp * aL);
 
     // legs
     this.set('thighL', 'x', -thighAmp * sL - crouch * 0.6);
@@ -409,26 +441,30 @@ export class Athlete {
     this.set('thighR', 'z', -0.03 - crouch * 0.15);
 
     // hips bob: lowest at mid-stance, highest in the flight phase of a run
-    const bob = lerp(0.012, 0.055, sp) * moving;
+    const bob = lerp(0.01, 0.042, sp) * moving;
     const idle = 1 - moving;
-    this.set('hips', 'py', -bob * this.gait.stance - crouch * 0.17 - 0.03 * moving - 0.035 * idle);
+    this.set('hips', 'py', -crouch * 0.17 - 0.012 * moving - 0.035 * idle);
+    this.cy('hips', 'py', -bob * this.gait.stance);
 
-    // torso lean: forward with speed & acceleration, into turns
-    this.set('spine', 'x', 0.06 + 0.3 * sp + crouch * 0.35 + (p.closeControl ? 0.15 : 0) + 0.015 * Math.sin(this.t * 1.7));
-    this.set('body', 'x', this.pitch + 0.1 * sp * moving);        // a runner leans from the ankles
+    // torso: tall and only slightly forward at a jog (more at a sprint), plus the weight
+    // pitch from acceleration; banked into turns
+    this.set('spine', 'x', 0.03 + 0.13 * sp + crouch * 0.35 + (p.closeControl ? 0.15 : 0) + 0.015 * Math.sin(this.t * 1.7));
+    this.set('body', 'x', this.pitch + 0.08 * sp * moving);       // a runner leans from the ankles
     // standing: the weight shifts slowly from foot to foot
     this.set('body', 'z', this.lean + 0.025 * idle * Math.sin(this.t * 1.1 + this.p.id));
 
-    // arms swing opposite the legs
-    const armAmp = lerp(0.25, 1.15, sp) * moving;
-    this.set('armL', 'x', armAmp * sL * 0.9);
-    this.set('armR', 'x', armAmp * sR * 0.9);
+    // arms swing opposite the legs, elbows bent to ~90° from a jog up
+    const armAmp = lerp(0.2, 0.95, sp) * moving;
+    this.cy('armL', 'x', armAmp * aL * 0.9);
+    this.cy('armR', 'x', armAmp * aR * 0.9);
     this.set('armL', 'z', 0.1 + crouch * 0.5 + (1 - moving) * 0.05);
     this.set('armR', 'z', -0.1 - crouch * 0.5 - (1 - moving) * 0.05);
-    this.set('foreL', 'x', -lerp(0.25, 1.65, smooth(sp)) - crouch * 0.4);
-    this.set('foreR', 'x', -lerp(0.25, 1.65, smooth(sp)) - crouch * 0.4);
+    const elbow = lerp(0.3, 1.55, smooth(clamp(speed / 4.2, 0, 1))) + 0.12 * sp;
+    this.set('foreL', 'x', -elbow - crouch * 0.4);
+    this.set('foreR', 'x', -elbow - crouch * 0.4);
     if (p.line === 'GK' && speed < 3 && !(ball.owner === p)) {
       // keeper ready: hands up and out
+      this.cyc[ARM_L] = this.cyc[ARM_R] = 0;
       this.set('armL', 'x', -0.55); this.set('armR', 'x', -0.55);
       this.set('armL', 'z', 0.55); this.set('armR', 'z', -0.55);
       this.set('foreL', 'x', -0.9); this.set('foreR', 'x', -0.9);

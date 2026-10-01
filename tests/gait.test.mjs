@@ -42,6 +42,31 @@ export default function () {
     check('running at 5 m/s has a flight phase', flight > 5, `${flight} frames with both feet off the ground`);
   }
 
+  // 1b) Running form (held against a reference of a real footballer jogging): after toe-off
+  //     the heel comes up behind him — about knee height at a jog, higher at a sprint —
+  //     and the foot comes through under the hip by mid-swing (the knee drives through);
+  //     at toe-off the heel is well up (the ankle pivots over the ball of the foot).
+  {
+    const form = v => {
+      const g = new Gait(), body = { x: 0, z: 0, vx: v, vz: 0, yaw: yawOf(v, 0) };
+      drive(g, 40, body);
+      const rows = drive(g, 90, body);
+      let peak = 0, under = 1, heel = 0;
+      for (const r of rows) {
+        const L = r.L, T = r.T.L;
+        if (L.state === 'swing') {
+          peak = Math.max(peak, T.y);
+          if (L.x - r.x > 0 && L.s < under) under = L.s;     // first moment the foot is ahead of the hip
+        } else heel = Math.max(heel, L.heel || 0);
+      }
+      return { peak, under, heel };
+    };
+    const jog = form(5), sprint = form(7.2);
+    check('running form: the heel recovers high behind (≥ 0.38 m at a jog, higher at a sprint)', jog.peak >= 0.38 && sprint.peak > jog.peak + 0.05, `ankle peak ${jog.peak.toFixed(2)} m jogging · ${sprint.peak.toFixed(2)} m sprinting`);
+    check('running form: the foot comes through under the hip by mid-swing (knee drive)', jog.under < 0.65 && sprint.under < 0.65, `ahead of the hip at s ${jog.under.toFixed(2)} (jog) · ${sprint.under.toFixed(2)} (sprint)`);
+    check('running form: the heel is well up at push-off (≥ 35° at a jog)', jog.heel >= 0.6, `${(jog.heel * 57.3).toFixed(0)}° at a jog · ${(sprint.heel * 57.3).toFixed(0)}° sprinting`);
+  }
+
   // 2) A stop: both feet end planted under the body.
   {
     const g = new Gait(), body = { x: 0, z: 0, vx: 6, vz: 0, yaw: yawOf(6, 0) };

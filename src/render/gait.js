@@ -20,8 +20,12 @@ const TOUCHDOWN = 0.35;             // share of the stance travel the foot lands
 // Steps per second, and the share of a cycle each foot is planted, by speed (m/s).
 export const cadence = v => 1.75 + 1.85 * Math.pow(clamp(v / 7.4, 0, 1), 0.8);
 export const duty = v => lerp(0.6, 0.25, smooth(clamp((v - 1) / 6, 0, 1)));
-const swingHeight = v => lerp(0.07, 0.4, Math.pow(clamp(v / 7.4, 0, 1), 1.3));
-const maxHeel = v => lerp(0.15, 0.55, clamp(v / 7.4, 0, 1));
+// Heel recovery: after toe-off a runner's knee folds and the heel rises behind him — about
+// knee height at a jog, toward the backside at a sprint — before the knee drives through.
+const swingHeight = v => lerp(0.07, 0.56, Math.pow(clamp(v / 7.4, 0, 1), 1.15));
+// Push-off: the heel comes well up (the ankle pivots over the ball of the foot), which is
+// what lets the trailing leg reach behind him without the hips sinking.
+const maxHeel = v => lerp(0.2, 1.0, clamp(v / 7.4, 0, 1));
 
 const fwd = yaw => ({ x: Math.sin(yaw), z: Math.cos(yaw) });   // three.js yaw → ground direction
 const left = yaw => ({ x: Math.cos(yaw), z: -Math.sin(yaw) });
@@ -96,8 +100,10 @@ export class Gait {
           // travel ahead of the hip.
           const r = rest(sx), lead = D * cyc * TOUCHDOWN;
           const ex = r.x - x + this.vx * lead, ez = r.z - z + this.vz * lead;
-          const e = smooth(ft.s);
-          ft.x = x + lerp(ft.rx, ex, e); ft.z = z + lerp(ft.rz, ez, e); ft.yaw = yaw;
+          // The foot comes through under the hip early (the knee folds tight as it does)
+          // rather than trailing; the height is an early peak (below).
+          const e = smooth(ft.s), ef = Math.pow(e, 0.8);
+          ft.x = x + lerp(ft.rx, ex, ef); ft.z = z + lerp(ft.rz, ez, ef); ft.yaw = yaw;
           const tx = x + ex, tz = z + ez;
           // an early peak (the heel kicks up behind) that still leaves the ground smoothly,
           // starting from the lift-off height
@@ -143,7 +149,7 @@ export class Gait {
     for (const f of ['L', 'R']) {
       const ft = F[f];
       out[f] = ft.state === 'plant' ? { ...this.ankle(ft, s), pitch: ft.heel || 0, planted: true }
-        : { x: ft.x, y: ANKLE * s + (ft.h || 0), z: ft.z, pitch: ft.pitch || 0, planted: false };
+        : { x: ft.x, y: ANKLE * s + (ft.h || 0), z: ft.z, pitch: ft.pitch || 0, planted: false, s: ft.s || 0 };
     }
     return out;
   }
