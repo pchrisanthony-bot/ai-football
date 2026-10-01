@@ -105,7 +105,7 @@ kbd { display: inline-block; font: 700 11px var(--body); padding: 2px 6px; borde
 .ptag-stam div { height: 100%; background: #6cf; }
 
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
-.radar { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); width: 192px; height: 108px; border-radius: 4px; opacity: .92; }
+.radar { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); width: 192px; height: auto; border-radius: 4px; opacity: .92; }
 .hint { position: absolute; bottom: 136px; left: 50%; transform: translateX(-50%); font: 600 11px var(--body); color: rgba(255,255,255,.55); white-space: nowrap; animation: hintfade 1s 12s forwards; }
 @keyframes hintfade { to { opacity: 0; } }
 
@@ -188,6 +188,8 @@ kbd { display: inline-block; font: 700 11px var(--body); padding: 2px 6px; borde
 .lu-row span { font: 800 14px var(--body); padding: 4px 6px; display: flex; flex-direction: column; line-height: 1.15; }
 .lu-row small { font: 800 9px var(--body); letter-spacing: 1.5px; color: var(--accent); }
 .lu-row em { font: 400 20px var(--display); font-style: normal; background: #f1f2f4; color: #111; align-self: stretch; display: grid; place-items: center; }
+/* A full XI: tighter rows (the archetype tag rides next to the name) */
+.lineups.big .lu-row { min-height: 29px; } .lineups.big .lu-row span { flex-direction: row; align-items: baseline; gap: 6px; padding: 2px 6px; } .lineups.big .lu-row em { font-size: 17px; }
 .lu-mid { display: flex; flex-direction: column; gap: 8px; }
 .lu-vs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; background: rgba(12,14,20,.72); padding: 10px 8px; }
 .lu-v { font: 400 26px var(--display); color: var(--muted); padding: 0 6px; }
@@ -337,6 +339,7 @@ kbd { display: inline-block; font: 700 11px var(--body); padding: 2px 6px; borde
   .lu-bar { grid-template-columns: 24px 1fr; font-size: 8px; } .lu-bar i { height: 4px; }
   .lu-row { min-height: 28px; grid-template-columns: 30px 20px 1fr 32px; } .lu-row span { font-size: 11px; padding: 2px 4px; } .lu-row em { font-size: 15px; }
   .lu-head { font-size: 14px; padding: 3px; } .lu-comp { font-size: 12px; padding: 4px; }
+  .lineups.big .lu-row { min-height: 19px; } .lineups.big .lu-row small { display: none; } .lineups.big .lu-row em { font-size: 12px; }
   .ft-head { padding: 5px 10px; } .ft-score { font-size: 30px; } .ft-team { font-size: 14px; gap: 6px; } .ft-team .crest { width: 22px; height: 26px; }
   .ft-row { grid-template-columns: 110px 1fr; padding: 1px 0; } .ft-bar { height: 15px; } .ft-bar b { font-size: 11px; }
   .ft-motm { font-size: 13px; padding: 3px 10px; } .ft-scorers { font-size: 10px; padding: 3px 10px; }
@@ -362,8 +365,8 @@ kbd { display: inline-block; font: 700 11px var(--body); padding: 2px 6px; borde
   .meter-name { display: none; }
   .meter-bar { height: 6px; }
   .meter-label { font-size: 9px; }
-  .radar { width: 128px; height: 72px; top: calc(8px + env(safe-area-inset-top)); bottom: auto; }
-  .is-touch .radar { left: auto; right: calc(118px + env(safe-area-inset-right)); transform: none; width: 112px; height: 63px; }
+  .radar { width: 128px; height: auto; top: calc(8px + env(safe-area-inset-top)); bottom: auto; }
+  .is-touch .radar { left: auto; right: calc(118px + env(safe-area-inset-right)); transform: none; width: 112px; height: auto; }
   .callout { top: 18%; }
   .notices { top: calc(40px + env(safe-area-inset-top)); width: min(420px, 56vw); }
   .notice small { font-size: 9px; }

@@ -180,7 +180,7 @@ export function lineupsPanel(match, sub) {
     return `<div class="lu-side"><div class="lu-crest">${crest(T.def, 40)}</div>${kitSVG(T.def.kit, star ? star.number : 10)}
       ${bar('ATT', b.att, '#FFC43D')}${bar('MID', b.mid, '#37D67A')}${bar('DEF', b.def, '#3D8BFF')}</div>`;
   };
-  return h('div', 'lineups', `${team(0)}<div class="lu-mid"><div class="lu-vs">${side(0)}<div class="lu-v">VS</div>${side(1)}</div><div class="lu-comp">${sub}</div></div>${team(1)}`);
+  return h('div', match.cfg.teamSize > 7 ? 'lineups big' : 'lineups', `${team(0)}<div class="lu-mid"><div class="lu-vs">${side(0)}<div class="lu-v">VS</div>${side(1)}</div><div class="lu-comp">${sub}</div></div>${team(1)}`);
 }
 
 // Full-time sheet (FTS layout): crests + final score, scorers with times, man of the
@@ -194,7 +194,7 @@ export function statsPanel(match) {
     ['SHOTS', A.stats.shots, B.stats.shots],
     ['ON TARGET', A.stats.onTarget, B.stats.onTarget],
     ['PASS COMPLETION', pct(A.stats.passesOk, A.stats.passes), pct(B.stats.passesOk, B.stats.passes), '%'],
-    ['CAGE GOALS', A.stats.cageGoals, B.stats.cageGoals],
+    match.cfg.rules.outOfPlay ? ['CORNERS', A.stats.corners, B.stats.corners] : ['CAGE GOALS', A.stats.cageGoals, B.stats.cageGoals],
     ['SKILLS', A.stats.skills, B.stats.skills],
     ['PANNAS', A.stats.pannas, B.stats.pannas],
     ['SAVES', A.stats.saves, B.stats.saves],

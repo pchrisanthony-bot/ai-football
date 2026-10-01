@@ -7,7 +7,9 @@ import { ledRibbon } from './textures.js';
 
 export function buildStands(scene, venue) {
   const { halfL, halfW } = PITCH;
-  const rows = 9, rise = 0.48, depth = 0.86;
+  const open = PITCH.boundary === 'open';
+  const rows = open ? 12 : 9, rise = 0.48, depth = 0.86;
+  const gap = open ? PITCH.runoff + 2.5 : 3.1;     // pitch edge → front of the stands
   const concrete = new THREE.MeshStandardMaterial({ color: 0x2c313d, roughness: 0.9 });
   const seatA = new THREE.MeshStandardMaterial({ color: 0x1d3f8a, roughness: 0.7 });
   const seatB = new THREE.MeshStandardMaterial({ color: 0x8a1d2a, roughness: 0.7 });
@@ -39,7 +41,7 @@ export function buildStands(scene, venue) {
     if (along === 'x') bw.position.set(mid, bh / 2, back); else bw.position.set(back, bh / 2, mid);
     scene.add(bw);
   };
-  const mainFront = -halfW - 3.1, endFront = halfL + 3.3;
+  const mainFront = -halfW - gap, endFront = halfL + gap + 0.2;
   stand('x', mainFront, -1, -halfL - 2, halfL + 2, seatA);
   stand('z', -endFront, -1, -halfW - 1, halfW + 1.5, seatB);
   stand('z', endFront, 1, -halfW - 1, halfW + 1.5, seatB);
@@ -106,7 +108,7 @@ export function buildStands(scene, venue) {
       varying vec2 vUv; varying float vTeam, vTone, vLight;
       #include <fog_pars_vertex>
       void main() {
-        vUv = uv; vTeam = aTeam; vTone = aTone; vLight = 0.62 + 0.38 * (1.0 - aRow / 9.0);
+        vUv = uv; vTeam = aTeam; vTone = aTone; vLight = 0.62 + 0.38 * (1.0 - aRow / ${rows.toFixed(1)});
         float c = cos(aFace), s = sin(aFace);
         vec3 p = vec3(position.x * c, position.y * (0.9 + 0.2 * aTone), -position.x * s);
         float bob = abs(sin(uTime * (2.2 + aPhase * 1.6) + aPhase * 6.28)) * 0.06 * (0.3 + uExcite * 2.2);

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { PITCH } from '../sim/pitch.js';
 import { courtTextures, chainLink, netTexture, graffitiBoard, concreteTexture, radialTexture, bannerTexture, sprayTag, turfTextures, adBoard } from './textures.js';
 import { buildStands, towerHead } from './stadium.js';
+import { buildOpenPitch } from './markings.js';
 
 // ------------------------------------------------------------------ ripple FX (fence + nets)
 // Up to 8 live impacts; vertices are pushed along the surface normal by a decaying ring wave.
@@ -49,9 +50,10 @@ class Ripples {
 // turf, stands and a crowd — the FTS 15 look). Builds into `scene` (a Group) and
 // hands back its fog separately so venues can be swapped.
 export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
-  const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH } = PITCH;
-  const arena = kind === 'arena';
-  const venue = { kind, fence: new Ripples(), nets: new Ripples(), nearFade: [], lights: [], animated: [] };
+  const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH, runoff } = PITCH;
+  const open = PITCH.boundary === 'open';      // an open pitch is always in a stadium
+  const arena = kind === 'arena' || open;
+  const venue = { kind, fence: new Ripples(), nets: new Ripples(), lights: [], animated: [] };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
 
   // ---------------------------------------------------------------- sky
@@ -100,7 +102,10 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     // The far-right mast has a dying lamp: it buzzes and stutters now and then.
     const dying = !arena && sx === 1 && sz === -1;
     const lm = dying ? lampMat.clone() : lampMat;
-    const bx = sx * (halfL + (arena ? 7.5 : 3.2)), bz = sz * (halfW + (arena ? 12 : 3.2)), top = arena ? 21 : 12;
+    const out = open ? [runoff + 16, runoff + 20] : arena ? [7.5, 12] : [3.2, 3.2];
+    const bx = sx * (halfL + out[0]), bz = sz * (halfW + out[1]), top = open ? 26 + PITCH.length * 0.14 : arena ? 21 : 12;
+    const aim = open ? new THREE.Vector3(sx * halfL * 0.2, 0, sz * halfW * 0.15) : new THREE.Vector3(sx * 3, 0, sz * 1.5);
+    const reach = Math.hypot(bx - aim.x, top, bz - aim.z), k = open ? reach / 35.3 : 1;   // 35.3 m: the stadium cage's throw
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(arena ? 0.3 : 0.14, arena ? 0.55 : 0.22, top, 12), mastMat);
     mast.position.set(bx, top / 2, bz); mast.castShadow = false;
     scene.add(mast);
@@ -117,18 +122,18 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
       }
     }
     head.position.set(bx, top, bz);
-    head.lookAt(sx * 4, 0, sz * 2);
+    head.lookAt(open ? aim.x : sx * 4, 0, open ? aim.z : sz * 2);
     scene.add(head);
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: flare, color: 0xffe9c4, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6 }));
-    glow.scale.setScalar(arena ? 8 : 5); glow.position.set(bx - sx * 0.3, top, bz - sz * 0.3);
+    glow.scale.setScalar((arena ? 8 : 5) * Math.sqrt(k)); glow.position.set(bx - sx * 0.3, top, bz - sz * 0.3);
     scene.add(glow);
 
-    const spot = new THREE.SpotLight(0xfff1dc, arena ? 3600 : 1500, 0, 0.78, 0.6, 2);
+    const spot = new THREE.SpotLight(0xfff1dc, (arena ? 3600 : 1500) * k * k, 0, 0.78, 0.6, 2);
     spot.position.set(bx, top, bz);
-    spot.target.position.set(sx * 3, 0, sz * 1.5);
+    spot.target.position.copy(aim);
     spot.castShadow = true;
     spot.shadow.mapSize.set(1024, 1024);
-    spot.shadow.camera.near = 4; spot.shadow.camera.far = arena ? 70 : 50;
+    spot.shadow.camera.near = 4; spot.shadow.camera.far = open ? reach + 90 : arena ? 70 : 50;
     spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.03;
     spot.shadow.radius = 3;
     scene.add(spot, spot.target);
@@ -136,8 +141,8 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     if (dying) venue.flicker = { spot, glow, mat: lm };
 
     // Volumetric-ish light cone (additive, fades with length).
-    const coneLen = arena ? 26 : 16;
-    const coneGeo = new THREE.ConeGeometry(arena ? 10 : 6.5, coneLen, 32, 1, true);
+    const coneLen = (arena ? 26 : 16) * k;
+    const coneGeo = new THREE.ConeGeometry((arena ? 10 : 6.5) * k, coneLen, 32, 1, true);
     coneGeo.translate(0, -coneLen / 2, 0);
     const coneMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false,
@@ -150,7 +155,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     });
     const cone = new THREE.Mesh(coneGeo, coneMat);
     cone.position.set(bx, top, bz);
-    const dir = new THREE.Vector3(sx * 3 - bx, -top, sz * 1.5 - bz).normalize();
+    const dir = new THREE.Vector3(aim.x - bx, -top, aim.z - bz).normalize();
     cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
     scene.add(cone);
   }
@@ -158,7 +163,8 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
   // ---------------------------------------------------------------- rooftop floor & parapet
   const conc = concreteTexture();
   conc.repeat.set(24, 18); conc.anisotropy = maxAniso;
-  const roof = new THREE.Mesh(new THREE.PlaneGeometry(arena ? 110 : 64, arena ? 90 : 48), new THREE.MeshStandardMaterial({ map: conc, roughness: 0.95, metalness: 0, color: arena ? 0x8a8f99 : 0xffffff }));
+  const floorL = open ? PITCH.length + 2 * runoff + 90 : arena ? 110 : 64, floorW = open ? PITCH.width + 2 * runoff + 90 : arena ? 90 : 48;
+  const roof = new THREE.Mesh(new THREE.PlaneGeometry(floorL, floorW), new THREE.MeshStandardMaterial({ map: conc, roughness: 0.95, metalness: 0, color: arena ? 0x8a8f99 : 0xffffff }));
   roof.rotation.x = -Math.PI / 2; roof.position.y = -0.02; roof.receiveShadow = true;
   scene.add(roof);
   if (!arena) {
@@ -170,59 +176,45 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     }
   }
 
-  // ---------------------------------------------------------------- court
-  const { map, roughness } = arena ? turfTextures() : courtTextures();
-  map.anisotropy = maxAniso;
-  const court = new THREE.Mesh(
-    new THREE.PlaneGeometry(halfL * 2, halfW * 2),
-    new THREE.MeshStandardMaterial({ map, roughnessMap: roughness, roughness: arena ? 0.95 : 0.85, metalness: 0.0 }),
-  );
-  // Rain: the surface goes glossy (and a touch darker) so the floodlights streak on it.
-  const dryRough = court.material.roughness;
-  venue.setWet = on => {
-    court.material.roughness = on ? (arena ? 0.55 : 0.32) : dryRough;
-    court.material.roughnessMap = on ? null : roughness;
-    court.material.color.setScalar(on ? 0.8 : 1);
-    court.material.needsUpdate = true;
-  };
-  // A turf pitch runs a little wider than the cage floor, like a real 5-a-side centre.
-  if (arena) {
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry(halfL * 2 + 12, halfW * 2 + 5), new THREE.MeshStandardMaterial({ color: 0x3a7d2c, roughness: 0.95 }));
-    apron.rotation.x = -Math.PI / 2; apron.position.y = -0.005; apron.receiveShadow = true;
-    scene.add(apron);
+  // ---------------------------------------------------------------- playing surface
+  if (open) {
+    const pitch = buildOpenPitch(maxAniso);
+    scene.add(pitch.group);
+    venue.setWet = pitch.setWet;
+  } else {
+    const { map, roughness } = arena ? turfTextures() : courtTextures();
+    map.anisotropy = maxAniso;
+    const court = new THREE.Mesh(
+      new THREE.PlaneGeometry(halfL * 2, halfW * 2),
+      new THREE.MeshStandardMaterial({ map, roughnessMap: roughness, roughness: arena ? 0.95 : 0.85, metalness: 0.0 }),
+    );
+    // Rain: the surface goes glossy (and a touch darker) so the floodlights streak on it.
+    const dryRough = court.material.roughness;
+    venue.setWet = on => {
+      court.material.roughness = on ? (arena ? 0.55 : 0.32) : dryRough;
+      court.material.roughnessMap = on ? null : roughness;
+      court.material.color.setScalar(on ? 0.8 : 1);
+      court.material.needsUpdate = true;
+    };
+    // A turf pitch runs a little wider than the cage floor, like a real 5-a-side centre.
+    if (arena) {
+      const apron = new THREE.Mesh(new THREE.PlaneGeometry(halfL * 2 + 12, halfW * 2 + 5), new THREE.MeshStandardMaterial({ color: 0x3a7d2c, roughness: 0.95 }));
+      apron.rotation.x = -Math.PI / 2; apron.position.y = -0.005; apron.receiveShadow = true;
+      scene.add(apron);
+    }
+    court.rotation.x = -Math.PI / 2;
+    court.receiveShadow = true;
+    scene.add(court);
+    // goal floors
+    for (const s of [-1, 1]) {
+      const gf = new THREE.Mesh(new THREE.PlaneGeometry(goalD, goalHalfW * 2), new THREE.MeshStandardMaterial({ color: 0x1b1c21, roughness: 0.95 }));
+      gf.rotation.x = -Math.PI / 2; gf.position.set(s * (halfL + goalD / 2), 0.001, 0); gf.receiveShadow = true;
+      scene.add(gf);
+    }
   }
-  court.rotation.x = -Math.PI / 2;
-  court.receiveShadow = true;
-  scene.add(court);
-  // goal floors
-  for (const s of [-1, 1]) {
-    const gf = new THREE.Mesh(new THREE.PlaneGeometry(goalD, goalHalfW * 2), new THREE.MeshStandardMaterial({ color: 0x1b1c21, roughness: 0.95 }));
-    gf.rotation.x = -Math.PI / 2; gf.position.set(s * (halfL + goalD / 2), 0.001, 0); gf.receiveShadow = true;
-    scene.add(gf);
-  }
 
-  // ---------------------------------------------------------------- cage
-  const chain = chainLink();
-  chain.anisotropy = maxAniso;
-  // Blended (not cut out) so the mesh mips down to a believable haze at distance.
-  const fenceBase = { color: 0xb4bcc8, metalness: 0.7, roughness: 0.4, alphaMap: chain, side: THREE.DoubleSide, transparent: true, depthWrite: false };
-  const fenceMat = new THREE.MeshStandardMaterial({ ...fenceBase, opacity: 1 });
-  addRipple(fenceMat, venue.fence.U, { freq: 8, speed: 22, falloff: 1.4, decay: 3.2 });
-  const nearFenceMat = new THREE.MeshStandardMaterial({ ...fenceBase, opacity: 0.28 });
-  addRipple(nearFenceMat, venue.fence.U, { freq: 8, speed: 22, falloff: 1.4, decay: 3.2 });
-  const cell = 0.11; // chain-link diamond size in metres
 
-  const fencePanel = (len, h, near) => {
-    const g = new THREE.PlaneGeometry(len, h, Math.max(2, Math.round(len * 3)), Math.max(2, Math.round(h * 3)));
-    const m = new THREE.Mesh(g, near ? nearFenceMat : fenceMat);
-    // per-panel UV repeat
-    const uv = g.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len / cell, uv.getY(i) * h / cell);
-    return m;
-  };
-  const posts = [];
-  const addPost = (x, z, h = wallH) => posts.push([x, z, h]);
-
+  // ---------------------------------------------------------------- boards
   const boardMatFor = (seed, len, near) => {
     const t = arena ? adBoard(seed, len) : graffitiBoard(seed, len);
     t.anisotropy = maxAniso;
@@ -238,60 +230,94 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     m.position.set(x, boardH / 2, z); m.rotation.y = rotY;
     m.receiveShadow = true; m.castShadow = !near;
     scene.add(m);
-    if (near) venue.nearFade.push(m);
     return m;
   };
-
-  // Side walls (z = ±halfW). The camera sits at +z, so that one is see-through.
-  for (const s of [-1, 1]) {
-    const near = s > 0;
-    const f = fencePanel(halfL * 2, wallH - boardH, near);
-    f.position.set(0, boardH + (wallH - boardH) / 2, s * halfW);
-    scene.add(f);
-    addBoard(halfL * 2, 0, s * (halfW + 0.04), s > 0 ? Math.PI : 0, s > 0 ? 3 : 4, near);
-    if (!near) for (let x = -halfL; x <= halfL + 0.01; x += 4) addPost(x, s * (halfW + 0.06), wallH + 0.1);
-  }
-  // End walls with the goal mouth cut out.
-  for (const s of [-1, 1]) {
-    const x = s * halfL;
-    const sideLen = halfW - goalHalfW;
-    for (const zs of [-1, 1]) {
-      const zc = zs * (goalHalfW + sideLen / 2);
-      const f = fencePanel(sideLen, wallH - boardH, false);
-      f.position.set(x, boardH + (wallH - boardH) / 2, zc); f.rotation.y = Math.PI / 2;
-      scene.add(f);
-      addBoard(sideLen, x + s * 0.04, zc, s > 0 ? -Math.PI / 2 : Math.PI / 2, 10 + s * 2 + zs, false);
-    }
-    const top = fencePanel(goalHalfW * 2, wallH - goalH, false);
-    top.position.set(x, goalH + (wallH - goalH) / 2, 0); top.rotation.y = Math.PI / 2;
-    scene.add(top);
-    for (const z of [-halfW, -halfW / 2, halfW / 2, halfW]) addPost(x + s * 0.06, z, wallH + 0.1);
-  }
-  // Posts & rails
-  const postMat = new THREE.MeshStandardMaterial({ color: 0x3d434d, metalness: 0.85, roughness: 0.35 });
-  const postGeo = new THREE.CylinderGeometry(0.055, 0.055, 1, 10);
-  const postMesh = new THREE.InstancedMesh(postGeo, postMat, posts.length);
   const M = new THREE.Matrix4();
-  posts.forEach(([x, z, h], i) => { M.compose(new THREE.Vector3(x, h / 2, z), new THREE.Quaternion(), new THREE.Vector3(1, h, 1)); postMesh.setMatrixAt(i, M); });
-  postMesh.castShadow = true;
-  scene.add(postMesh);
-  const rail = (x1, z1, x2, z2, y) => {
-    const len = Math.hypot(x2 - x1, z2 - z1);
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, len, 8), postMat);
-    m.position.set((x1 + x2) / 2, y, (z1 + z2) / 2);
-    m.rotation.z = Math.PI / 2; m.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
-    scene.add(m);
-  };
-  for (const y of [wallH]) {
-    rail(-halfL, -halfW, halfL, -halfW, y);
-    rail(-halfL, -halfW, -halfL, halfW, y); rail(halfL, -halfW, halfL, halfW, y);
+
+  if (open) {
+    // Advertising boards round the run-off, where the ball physics stops the ball. Long
+    // runs are split into boards of ~20 m (each with its own artwork); the camera side
+    // is see-through.
+    const ex = halfL + runoff, ez = halfW + runoff;
+    const run = (len, place) => { const n = Math.ceil(len / 20), seg = len / n; for (let i = 0; i < n; i++) place(-len / 2 + seg * (i + 0.5), seg, i); };
+    for (const s of [-1, 1]) {
+      run(ex * 2, (c, seg, i) => addBoard(seg, c, s * (ez + 0.04), s > 0 ? Math.PI : 0, (s > 0 ? 3 : 4) + i * 7, s > 0));
+      run(ez * 2, (c, seg, i) => addBoard(seg, s * (ex + 0.04), c, s > 0 ? -Math.PI / 2 : Math.PI / 2, 10 + s * 2 + i * 5, false));
+    }
+  } else {
+    // -------------------------------------------------------------- cage
+    const chain = chainLink();
+    chain.anisotropy = maxAniso;
+    // Blended (not cut out) so the mesh mips down to a believable haze at distance.
+    const fenceBase = { color: 0xb4bcc8, metalness: 0.7, roughness: 0.4, alphaMap: chain, side: THREE.DoubleSide, transparent: true, depthWrite: false };
+    const fenceMat = new THREE.MeshStandardMaterial({ ...fenceBase, opacity: 1 });
+    addRipple(fenceMat, venue.fence.U, { freq: 8, speed: 22, falloff: 1.4, decay: 3.2 });
+    const nearFenceMat = new THREE.MeshStandardMaterial({ ...fenceBase, opacity: 0.28 });
+    addRipple(nearFenceMat, venue.fence.U, { freq: 8, speed: 22, falloff: 1.4, decay: 3.2 });
+    const cell = 0.11; // chain-link diamond size in metres
+
+    const fencePanel = (len, h, near) => {
+      const g = new THREE.PlaneGeometry(len, h, Math.max(2, Math.round(len * 3)), Math.max(2, Math.round(h * 3)));
+      const m = new THREE.Mesh(g, near ? nearFenceMat : fenceMat);
+      // per-panel UV repeat
+      const uv = g.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len / cell, uv.getY(i) * h / cell);
+      return m;
+    };
+    const posts = [];
+    const addPost = (x, z, h = wallH) => posts.push([x, z, h]);
+
+
+    // Side walls (z = ±halfW). The camera sits at +z, so that one is see-through.
+    for (const s of [-1, 1]) {
+      const near = s > 0;
+      const f = fencePanel(halfL * 2, wallH - boardH, near);
+      f.position.set(0, boardH + (wallH - boardH) / 2, s * halfW);
+      scene.add(f);
+      addBoard(halfL * 2, 0, s * (halfW + 0.04), s > 0 ? Math.PI : 0, s > 0 ? 3 : 4, near);
+      if (!near) for (let x = -halfL; x <= halfL + 0.01; x += 4) addPost(x, s * (halfW + 0.06), wallH + 0.1);
+    }
+    // End walls with the goal mouth cut out.
+    for (const s of [-1, 1]) {
+      const x = s * halfL;
+      const sideLen = halfW - goalHalfW;
+      for (const zs of [-1, 1]) {
+        const zc = zs * (goalHalfW + sideLen / 2);
+        const f = fencePanel(sideLen, wallH - boardH, false);
+        f.position.set(x, boardH + (wallH - boardH) / 2, zc); f.rotation.y = Math.PI / 2;
+        scene.add(f);
+        addBoard(sideLen, x + s * 0.04, zc, s > 0 ? -Math.PI / 2 : Math.PI / 2, 10 + s * 2 + zs, false);
+      }
+      const top = fencePanel(goalHalfW * 2, wallH - goalH, false);
+      top.position.set(x, goalH + (wallH - goalH) / 2, 0); top.rotation.y = Math.PI / 2;
+      scene.add(top);
+      for (const z of [-halfW, -halfW / 2, halfW / 2, halfW]) addPost(x + s * 0.06, z, wallH + 0.1);
+    }
+    // Posts & rails
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x3d434d, metalness: 0.85, roughness: 0.35 });
+    const postGeo = new THREE.CylinderGeometry(0.055, 0.055, 1, 10);
+    const postMesh = new THREE.InstancedMesh(postGeo, postMat, posts.length);
+    posts.forEach(([x, z, h], i) => { M.compose(new THREE.Vector3(x, h / 2, z), new THREE.Quaternion(), new THREE.Vector3(1, h, 1)); postMesh.setMatrixAt(i, M); });
+    postMesh.castShadow = true;
+    scene.add(postMesh);
+    const rail = (x1, z1, x2, z2, y) => {
+      const len = Math.hypot(x2 - x1, z2 - z1);
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, len, 8), postMat);
+      m.position.set((x1 + x2) / 2, y, (z1 + z2) / 2);
+      m.rotation.z = Math.PI / 2; m.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
+      scene.add(m);
+    };
+    for (const y of [wallH]) {
+      rail(-halfL, -halfW, halfL, -halfW, y);
+      rail(-halfL, -halfW, -halfL, halfW, y); rail(halfL, -halfW, halfL, halfW, y);
+    }
+    // Roof net: a sparse grid overhead.
+    const rn = netTexture();
+    const roofNet = new THREE.Mesh(new THREE.PlaneGeometry(halfL * 2, halfW * 2), new THREE.MeshBasicMaterial({ color: 0x6a7080, alphaMap: rn, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide }));
+    rn.repeat.set(halfL * 2 / 0.8, halfW * 2 / 0.8);
+    roofNet.rotation.x = Math.PI / 2; roofNet.position.y = roofH;
+    scene.add(roofNet);
   }
-  // Roof net: a sparse grid overhead.
-  const rn = netTexture();
-  const roofNet = new THREE.Mesh(new THREE.PlaneGeometry(halfL * 2, halfW * 2), new THREE.MeshBasicMaterial({ color: 0x6a7080, alphaMap: rn, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide }));
-  rn.repeat.set(halfL * 2 / 0.8, halfW * 2 / 0.8);
-  roofNet.rotation.x = Math.PI / 2; roofNet.position.y = roofH;
-  scene.add(roofNet);
 
   // ---------------------------------------------------------------- goals
   const postWhite = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.3, metalness: 0.2, emissive: 0x111111 });
@@ -507,10 +533,12 @@ function buildCity(scene, venue) {
   const M = new THREE.Matrix4(), q = new THREE.Quaternion();
   let s = 12345;
   const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  // The skyline starts beyond the stadium (further out round a big pitch).
+  const R0 = Math.max(70, Math.hypot(PITCH.halfL + PITCH.runoff, PITCH.halfW + PITCH.runoff) + 50);
   let i = 0;
   while (i < N) {
     const ang = r() * Math.PI * 2;
-    const dist = 70 + r() * 260;
+    const dist = R0 + r() * 260;
     const x = Math.cos(ang) * dist, z = Math.sin(ang) * dist;
     const w = 10 + r() * 22, d = 10 + r() * 22;
     // Mostly below our roof, a few towers above it.

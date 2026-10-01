@@ -63,7 +63,7 @@ export class HUD {
     this.tag = h('div', 'ptag hidden', '<div class="ptag-name"></div><div class="ptag-power"><div></div></div><div class="ptag-stam"><div></div></div>');
     this.tagName = this.tag.querySelector('.ptag-name'); this.tagPow = this.tag.querySelector('.ptag-power'); this.tagPowFill = this.tagPow.firstChild; this.tagStam = this.tag.querySelector('.ptag-stam div');
     this.flashEl = h('div', 'flash');
-    this.radar = h('canvas', 'radar'); this.radar.width = 256; this.radar.height = 144;
+    this.radar = h('canvas', 'radar'); this.radar.width = 256; this.radar.height = Math.round(256 * PITCH.width / PITCH.length);   // the pitch's shape
     this.dbg = h('div', 'dbg');
     this.dbgLegend = h('div', 'dbg-legend hidden', `<b>AI DEBUG</b> — each tag is one autonomous agent: <i>STATE</i> · chosen action · top utility scores. <kbd>Tab</kbd> to hide`);
     this.tele = h('pre', 'tele hidden');
@@ -212,7 +212,7 @@ export class HUD {
     c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = 2;
     c.strokeRect(6, 6, W - 12, H - 12);
     c.beginPath(); c.moveTo(W / 2, 6); c.lineTo(W / 2, H - 6); c.stroke();
-    c.beginPath(); c.arc(W / 2, H / 2, 16, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(W / 2, H / 2, PITCH.centreR / PITCH.length * (W - 12), 0, Math.PI * 2); c.stroke();
     const X = x => 6 + (x + PITCH.halfL) / PITCH.length * (W - 12);
     const Z = z => 6 + (z + PITCH.halfW) / PITCH.width * (H - 12);
     for (const p of m.players) {

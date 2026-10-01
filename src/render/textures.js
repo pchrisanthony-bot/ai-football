@@ -373,6 +373,27 @@ export function turfTextures() {
   });
 }
 
+// Tileable turf detail (blade grain), repeated across an open pitch; the mown stripes
+// and the markings are drawn separately (render/markings.js).
+export function grassTile() {
+  return once('grassTile', () => {
+    const N = 256, c = canvas(N, N), g = c.getContext('2d');
+    const r = rng(33);
+    g.fillStyle = '#3f8a30'; g.fillRect(0, 0, N, N);
+    const img = g.getImageData(0, 0, N, N), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 30; d[i] += n * 0.55; d[i + 1] += n; d[i + 2] += n * 0.35; }
+    g.putImageData(img, 0, 0);
+    // short blades, drawn wrapped round the edges so the tile repeats seamlessly
+    g.lineWidth = 1;
+    for (let k = 0; k < 900; k++) {
+      const x = r() * N, y = r() * N, l = 2 + r() * 4, a = -Math.PI / 2 + (r() - 0.5) * 0.8;
+      g.strokeStyle = `rgba(${r() < 0.5 ? '20,60,12' : '120,180,80'},${0.12 + r() * 0.12})`;
+      for (const ox of [0, -N, N]) for (const oy of [0, -N, N]) { g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + Math.cos(a) * l, y + oy + Math.sin(a) * l); g.stroke(); }
+    }
+    return tex(c, { repeat: [1, 1], aniso: 16 });
+  });
+}
+
 // Sponsor-style perimeter boards (invented brands), clean like a stadium, not a wall.
 const SPONSORS = [['CAGE COLA', '#d7263d', '#fff'], ['ROOFTOP FM', '#111', '#FFD400'], ['VOLTKICK', '#1466FF', '#fff'], ['NUTMEG SPORTS', '#fff', '#111'],
   ['BLOCK PARTY', '#39FF88', '#111'], ['SC TV', '#B84DFF', '#fff'], ['KORNER', '#FF8A00', '#111'], ['STREETCAGE', '#FFD400', '#111']];

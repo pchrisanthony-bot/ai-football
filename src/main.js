@@ -20,6 +20,7 @@ import { Audio } from './audio/audio.js';
 import { HUD } from './ui/hud.js';
 import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel, lineupsPanel } from './ui/menus.js';
 import { TEAMS } from './sim/squads.js';
+import { FORMATS, FORMAT_IDS } from './sim/formats.js';
 import { drillVariants, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
 import { prof } from './util/profiler.js';
@@ -36,6 +37,9 @@ const VENUES = [
   { label: 'ROOFTOP CAGE', kind: 'rooftop', surface: 'court', sub: 'NIGHT · ASPHALT' },
   { label: 'STADIUM CAGE', kind: 'arena', surface: 'turf', sub: 'FLOODLIT · TURF · CROWD' },
 ];
+// Open pitches are played in the stadium.
+const OPEN_VENUES = [{ label: 'STADIUM', kind: 'arena', surface: 'turf', sub: 'FLOODLIT · TURF · CROWD' }];
+const venuesFor = f => (FORMATS[FORMAT_IDS[f]].pitch === 'cage5' ? VENUES : OPEN_VENUES);
 const WEATHER = [{ label: 'CLEAR' }, { label: 'RAIN' }];
 const venues = {};
 let venue = null;
@@ -74,7 +78,7 @@ const hud = new HUD(ui);
 const screens = document.createElement('div');
 ui.appendChild(screens);
 
-const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0 };
+const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0 };
 const GFX = ['AUTO', 'LOW', 'MEDIUM', 'HIGH', 'ULTRA'];
 
 // ---- performance governor: pick the best quality that holds ~60 fps on this machine.
@@ -115,6 +119,7 @@ function startMatchObject(opts, humanTeam, cond) {
   G.mview?.dispose();
   const m = new Match({ humanTeam, ...opts });
   applyConditions(...cond);
+  rig.setFraming(m.cfg.camera);
   G.match = m;
   G.mview = new MatchView({ scene: R.scene, renderer: R.renderer, venue, fx, audio, rig, hud }, m);
   G.human = humanTeam == null ? null : new HumanController(m, humanTeam, input);
@@ -167,12 +172,23 @@ function toSetup(spectate = false) {
   G.spectate = spectate;
   const scr = addScreen('screen dim');
   const teamOpts = TEAM_IDS.map(id => ({ label: TEAMS[id].name }));
+  const fmOpts = f => FORMATS[FORMAT_IDS[f]].formations.map(id => ({ label: id }));
+  // The format decides which formations and venues there are to choose from.
+  const formationItem = { label: 'FORMATION', options: fmOpts(settings.format), value: settings.formation, onChange: v => settings.formation = v };
+  const venueItem = { label: 'VENUE', options: venuesFor(settings.format), value: settings.venue, onChange: v => settings.venue = v };
   const items = [
     { label: spectate ? 'HOME' : 'YOUR TEAM', options: teamOpts, value: settings.home, onChange: v => settings.home = v, swatch: v => TEAMS[TEAM_IDS[v]].kit.shirt },
     { label: 'OPPONENT', options: teamOpts, value: settings.away, onChange: v => settings.away = v, swatch: v => TEAMS[TEAM_IDS[v]].kit.shirt },
+    { label: 'FORMAT', options: FORMAT_IDS.map(id => ({ label: FORMATS[id].label })), value: settings.format, onChange: v => {
+      settings.format = v; settings.formation = 0; settings.venue = 0;
+      formationItem.options = fmOpts(v); formationItem.value = 0;
+      venueItem.options = venuesFor(v); venueItem.value = 0;
+      G.menu.render();
+    } },
+    formationItem,
     { label: 'MATCH', options: MODES, value: settings.mode, onChange: v => settings.mode = v },
     { label: 'AI LEVEL', options: DIFFS, value: settings.diff, onChange: v => settings.diff = v },
-    { label: 'VENUE', options: VENUES, value: settings.venue, onChange: v => settings.venue = v },
+    venueItem,
     { label: 'WEATHER', options: WEATHER, value: settings.weather, onChange: v => settings.weather = v },
     { label: 'GRAPHICS', options: GFX, value: settings.gfx, onChange: v => { settings.gfx = v; applyGfx(); } },
     { label: spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: () => toLineups() },
@@ -185,10 +201,13 @@ function toSetup(spectate = false) {
 function newMatch() {
   if (settings.home === settings.away) settings.away = (settings.away + 1) % TEAM_IDS.length;
   const md = MODES[settings.mode];
-  const V = VENUES[settings.venue];
+  const V = venuesFor(settings.format)[settings.venue];
+  const F = FORMATS[FORMAT_IDS[settings.format]];
+  const seed = Math.floor(Math.random() * 1e6);
   return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
-    difficulty: DIFFS[settings.diff].v, seed: Math.floor(Math.random() * 1e6),
+    difficulty: DIFFS[settings.diff].v, seed,
+    format: FORMAT_IDS[settings.format], formations: [F.formations[settings.formation], F.formations[seed % F.formations.length]],
   }, G.spectate ? null : 0, [V.kind, V.surface, settings.weather === 1]);
 }
 
@@ -199,7 +218,7 @@ function toLineups() {
   hud.hide();
   G.state = 'lineups'; G.stateT = 0;
   const scr = addScreen('screen dim');
-  const panel = lineupsPanel(m, `${VENUES[settings.venue].label}${settings.weather ? ' · RAIN' : ''} · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
+  const panel = lineupsPanel(m, `${m.cfg.label} · ${venuesFor(settings.format)[settings.venue].label}${settings.weather ? ' · RAIN' : ''} · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
   G.menu = new Menu(scr, {
     cls: 'center wide', title: G.spectate ? 'WATCH AI' : 'LINE-UPS', subtitle: `${m.teams[0].def.name}  vs  ${m.teams[1].def.name}`,
     items: [{ label: G.spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: beginMatch }, { label: 'BACK', action: () => toSetup(G.spectate) }], side: panel,
@@ -472,7 +491,7 @@ function tick(dt) {
       G.human?.update(simDt);
       const events = stepMatch(simDt, false);
       if (G.drill) drillTick(dt, events);
-      rig.broadcast(dt, m.ball, m.human, spread(m));
+      rig.broadcast(dt, m.ball, m.human, rig.playSpread(m));
       if (m.phase === 'fulltime' && !G.drill) toFullTime();
       break;
     }
@@ -493,7 +512,7 @@ function tick(dt) {
     case 'paused':
       G.menu?.handle(input);
       if (input.pressed('pause')) { audio.uiBack(); resume(); }
-      rig.broadcast(0, m.ball, m.human, spread(m));
+      rig.broadcast(0, m.ball, m.human, rig.playSpread(m));
       break;
     case 'fulltime':
       stepMatch(dt, false);
@@ -545,12 +564,6 @@ function tick(dt) {
   t0 = prof.now();
   R.composer.render();
   prof.add('render-submit', t0);
-}
-
-function spread(m) {
-  let minX = Infinity, maxX = -Infinity;
-  for (const p of m.players) if (p.active) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); }
-  return maxX - minX;
 }
 
 // Advance the sim at a fixed 120 Hz and render-side view; returns this frame's events.
