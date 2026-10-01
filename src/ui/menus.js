@@ -195,6 +195,7 @@ export function statsPanel(match) {
     ['ON TARGET', A.stats.onTarget, B.stats.onTarget],
     ['PASS COMPLETION', pct(A.stats.passesOk, A.stats.passes), pct(B.stats.passesOk, B.stats.passes), '%'],
     match.cfg.rules.outOfPlay ? ['CORNERS', A.stats.corners, B.stats.corners] : ['CAGE GOALS', A.stats.cageGoals, B.stats.cageGoals],
+    ...(match.offside.enabled ? [['OFFSIDES', A.stats.offsides, B.stats.offsides]] : []),
     ['SKILLS', A.stats.skills, B.stats.skills],
     ['PANNAS', A.stats.pannas, B.stats.pannas],
     ['SAVES', A.stats.saves, B.stats.saves],

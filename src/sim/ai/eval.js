@@ -1,6 +1,6 @@
 // Evaluation functions for the AI: interception, threat, and the utility of
 // every on-ball option. Kept separate so the debug overlay can show the numbers.
-import { KICK } from '../../config.js';
+import { KICK, footballGameplayConfig as GP } from '../../config.js';
 import { PITCH, isCage, clampToField } from '../pitch.js';
 import { clamp, segDist2, angleDiff } from '../../util/math.js';
 import { groundPassSpeed, bankAim } from '../kicks.js';
@@ -127,7 +127,9 @@ export function evalPasses(m, p, runners = new Set()) {
   const out = [];
   for (const r of m.mates(p)) {
     if (r.line === 'GK') continue;
-    if (!isCage()) { const lob = evalLongBall(m, p, r, here); if (lob) out.push(lob); }
+    // A man in an offside position (as this side reads the line) is a free kick waiting to happen.
+    const off = m.offside.aiReadsOffside(r) ? GP.offside.aiPassPenalty : 0;
+    if (!isCage()) { const lob = evalLongBall(m, p, r, here); if (lob) { lob.u -= off; lob.offside = !!off; out.push(lob); } }
     const lead = m.leadTarget(p, r, runners.has(r));
     const through = runners.has(r);
     const d = Math.hypot(lead.x - b.x, lead.z - b.z);
@@ -146,7 +148,7 @@ export function evalPasses(m, p, runners = new Set()) {
     const value = threat(m, t, lead.x, lead.z) + clamp(open / 6, 0, 1) * 0.12;
     const ok = 1 - risk;
     const u = ok * value - (1 - ok) * 0.3 - here * 0.5 + 0.04;
-    out.push({ kind: through ? 'through' : 'pass', r, lead, risk, u, label: through ? 'THROUGH BALL' : 'PASS', path: [{ x: b.x, z: b.z }, lead] });
+    out.push({ kind: through ? 'through' : 'pass', r, lead, risk, u: u - off, offside: !!off, label: through ? 'THROUGH BALL' : 'PASS', path: [{ x: b.x, z: b.z }, lead] });
 
     // Wall pass: bank it off the cage around a blocker (street football's 1-2 with the wall).
     if (risk > 0.35 && isCage()) {
@@ -163,7 +165,7 @@ export function evalPasses(m, p, runners = new Set()) {
           const wr = laneRisk(m, t, path, btw, null, 0.6, 0.2).risk;
           const ok2 = 1 - wr;
           const u2 = ok2 * value - (1 - ok2) * 0.3 - here * 0.55 + 0.05;
-          out.push({ kind: 'wallpass', r, lead, risk: wr, u: u2, label: 'WALL PASS', path, angle: ba.angle, speed: sp });
+          out.push({ kind: 'wallpass', r, lead, risk: wr, u: u2 - off, label: 'WALL PASS', path, angle: ba.angle, speed: sp });
         }
       }
     }

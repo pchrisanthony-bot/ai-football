@@ -163,3 +163,93 @@ export const AI = {
   difficulty: 0.6,
   thinkInterval: 0.18,
 };
+
+// =====================================================================
+// Football gameplay — offside, passing, interception, the turnover. One place to tune
+// the rules and the fairness of the ball game. Difficulty (0..1) maps onto [weak, elite]
+// pairs through gameplaySkill(); it changes how quickly and how well the AI reads the
+// ball, never how far a player can reach it.
+// =====================================================================
+export const footballGameplayConfig = {
+  offside: {
+    tolerance: 0.15,            // m: within this of the line is level — onside
+    noOffsideFrom: ['THROW_IN', 'CORNER', 'GOAL_KICK'],   // no offside straight from these
+    interfereDist: 1.0,         // m: an offside man this close to a loose ball, going for it…
+    contestDist: 1.6,           // …with an opponent this close to it, is challenging him for it
+    screenDist: 0.8,            // m off the line of a shot and within screenKeeper m of the
+    screenKeeper: 2.5,          //   keeper: blocking his line of vision
+    aiMargin: 0.6,              // m AI attackers hold behind the line until the ball is played
+    aiTol: [0.6, -0.2],         // m the AI passer misjudges the line by [weak, elite] (+ = lenient)
+    aiPassPenalty: 0.6,         // utility an AI passer gives up for a man in an offside position
+    log: false,                 // console-log snapshots and calls
+  },
+  passing: {
+    assist: 'assisted',         // default: manual · semi · assisted · arcade
+    // window: rad either side of the stick a team-mate is looked for in · correct: share of
+    // the angle to him that is corrected · pace: share of the pace chosen for you (the rest
+    // comes from the charge) · error: execution error multiplier.
+    modes: {
+      manual:   { window: 0,    correct: 0,    pace: 0,    error: 1 },
+      semi:     { window: 0.35, correct: 0.55, pace: 0.5,  error: 1 },
+      assisted: { window: 0.62, correct: 0.92, pace: 0.85, error: 1 },
+      arcade:   { window: 1.0,  correct: 1,    pace: 1,    error: 0.55 },
+    },
+    // findBestPassTarget: how much each reason to pick a team-mate counts
+    weights: { alignment: 0.35, distance: 0.12, progression: 0.12, space: 0.14, movement: 0.09, safety: 0.18 },
+    // Pass quality 0..1: base + attr·pass, minus the situation
+    quality: { base: 0.22, attr: 0.72, facing: 0.24, speed: 0.12, pressure: 0.18, oneTouch: 0.14, distance: 0.12, overhit: 0.25 },
+    typeQuality: { short: 0, driven: -0.04, through: -0.05, lofted: -0.05, lob: -0.06, cross: -0.06, backheel: -0.16, emergency: -0.2 },
+    // Graded execution error: σ of the direction (rad) and of the pace (fraction) per grade.
+    // A pass's grade scatters (tierSpread) around the one its quality points to.
+    tiers: [
+      { name: 'excellent', ang: 0.014, pace: 0.03 },
+      { name: 'good',      ang: 0.035, pace: 0.06 },
+      { name: 'average',   ang: 0.07,  pace: 0.1 },
+      { name: 'poor',      ang: 0.13,  pace: 0.16 },
+      { name: 'very poor', ang: 0.23,  pace: 0.25 },
+    ],
+    tierSpread: 0.8,
+    leadNoise: 0.3,             // σ (share) of a receiver's run misread, at the worst quality
+    throughNoise: [0.06, 0.3],  // σ of a through ball's weight, best → worst quality
+    // Ground pace per type: arrival speed at the target [m/s, + per m], and the cap
+    arrive: { short: [6, 0.2], driven: [10.5, 0.25], through: [7, 0], backheel: [4, 0.1], emergency: [7, 0.25] },
+    maxPace: { short: 19, driven: 25, through: 19, backheel: 11, emergency: 19 },
+    loft: { lofted: 0.58, lob: 0.7, cross: 0.42 },   // launch elevation of lofted types
+    space: [7, 24],             // m: a pass into space, tapped → full power
+    backheel: { behind: 2.2, maxDist: 9 },   // rad off his facing / m
+    emergency: 1.0,             // m: an opponent this close (and the ball only just his) — hurried
+    contact: { backheel: 0.07, emergency: 0.07 },   // s to foot-on-ball (quicker, scrappier)
+    receiveAssist: true,        // a human receiver with the stick neutral moves to meet the ball
+  },
+  interception: {
+    // Reaction to a kick (s), [weak, elite] ranges.
+    reaction: { weak: [0.35, 0.5], elite: [0.12, 0.18] },
+    sameTeam: 0.55,             // the passer's side reads it sooner (they saw it coming)
+    facingAway: 0.08,           // s more when the kick is behind him
+    // Reading the ball's line: σ of the misread (rad / share of pace) [weak, elite] when he
+    // first reacts, shrinking as he watches it travel (τ s).
+    readAngle: [0.16, 0.04], readPace: [0.18, 0.05], readDecay: 0.35, readSameTeam: 0.5,
+    readHz: 10,                 // perceived-path refresh
+    etaMargin: 0.06,            // s a defender must beat the ball by to commit to cutting it out
+    laneReach: 2.4,             // m: a marker reads a ball passing this close as his to cut out
+    // Contact: how far from the body a foot can play the ball, by where it is
+    reach: { front: 0.62, side: 0.55, back: 0.42 },
+    stretch: 0.47,              // m: beyond this an interception is a stretch — a poke unless slow
+    stretchCtl: 0.55,           // …which controls it only below this share of the normal pace
+    fastCtl: 0,                 // m/s taken off the control limit for a defender cutting it out (read and in reach)
+    pokeKeep: [0.25, 0.55],     // share of pace a poke keeps
+  },
+  possession: {
+    // Winning the ball back: control it, look up, then decide (s) [weak, elite]
+    control: [0.3, 0.12],
+    scan: [0.4, 0.2],
+    safeRisk: 0.3,              // once he's looked up (or pressed hard), only a pass this safe
+  },
+  defending: {
+    lane: [0.12, 0.38],         // share of the way into the passing lane a marker shades [weak, elite]
+    laneMax: 2.6,               // m
+  },
+};
+// AI difficulty (0.35 amateur · 0.6 pro · 0.88 legend) → 0..1 along [weak, elite].
+export const gameplaySkill = diff => Math.max(0, Math.min(1, (diff - 0.2) / 0.7));
+export const byDiff = (pair, diff) => pair[0] + (pair[1] - pair[0]) * gameplaySkill(diff);

@@ -2,16 +2,20 @@
 // Match: the whole simulation. Pure logic, fixed 120 Hz, no rendering.
 // The renderer and audio read `match` state and drain `match.events`.
 // =====================================================================
-import { SIM_DT, BALL, PLAYER, KICK, RULES, STYLE, DRIB, TOUCH, RESTART } from '../config.js';
+import { SIM_DT, BALL, PLAYER, KICK, RULES, STYLE, DRIB, TOUCH, RESTART, footballGameplayConfig } from '../config.js';
 import { makeBall, stepBall, predictPath } from './ball.js';
 import { makePlayer, movePlayer, separatePlayers, clampToArea } from './players.js';
 import { TEAMS, buildLineup } from './squads.js';
 import { createMatchConfig } from './formats.js';
 import { formationToWorld } from './formations.js';
 import { PITCH, setPitch, inKeeperArea, isCage, lineCrossing, cornerSpot, goalKickSpot, clampToField } from './pitch.js';
-import { groundPassSpeed, solveLob, solveStrike, rollTime } from './kicks.js';
+import { groundPassSpeed, solveLob, solveStrike } from './kicks.js';
 import { clamp, damp, wrapAngle, angleDiff, mulberry32, smooth } from '../util/math.js';
 import { AIDirector } from './ai/director.js';
+import { OffsideSystem } from './rules/offside.js';
+import { PassingSystem } from './passing/passing.js';
+import { InterceptionSystem } from './ai/interception.js';
+import { receptionPoint } from './passing/trajectory.js';
 import { prof } from '../util/profiler.js';
 
 const R = BALL.r;
@@ -48,7 +52,10 @@ const ACTIONS = {
 const cm = v => Math.round(v * 100);
 const byShape = (a, c) => cm(c.form.x) - cm(a.form.x) || cm(Math.abs(a.form.y - 0.5)) - cm(Math.abs(c.form.y - 0.5)) || a.form.y - c.form.y;
 
-const RESTART_STAT = { THROW_IN: 'throwIns', CORNER: 'corners', GOAL_KICK: 'goalKicks' };
+const RESTART_STAT = { THROW_IN: 'throwIns', CORNER: 'corners', GOAL_KICK: 'goalKicks', FREE_KICK: 'freeKicks' };
+// Events after which the ball is on a new line that everyone has to read again.
+const NEW_LINE = new Set(['kick', 'header', 'deflect', 'block', 'save', 'chest', 'tackle']);
+const IC = footballGameplayConfig.interception;
 
 export const SKILL_NAMES = { stepover: 'STEPOVER', dragback: 'DRAG BACK', roulette: 'ROULETTE', rainbow: 'RAINBOW FLICK', flickup: 'FLICK UP', panna: 'PANNA!' };
 
@@ -65,7 +72,7 @@ export class Match {
     const defs = [TEAMS[this.opts.home], TEAMS[this.opts.away]];
     this.teams = defs.map((def, i) => ({
       idx: i, def, dir: i === 0 ? 1 : -1, score: 0, style: 0, gb: 0, gbReady: false, formation: this.cfg.formations[i],
-      stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0, corners: 0, throwIns: 0, goalKicks: 0 },
+      stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0, corners: 0, throwIns: 0, goalKicks: 0, freeKicks: 0, offsides: 0 },
     }));
     this.players = [];
     for (let t = 0; t < 2; t++) buildLineup(defs[t], this.cfg.formations[t]).forEach((L, s) => this.players.push(makePlayer(t, s, L, this.opts.seed)));
@@ -82,6 +89,10 @@ export class Match {
     this.goalInfo = null;
     this.goalLog = [];               // { team, scorer, name, own, cage, at } — for the lower-thirds and full-time sheet
     this.human = null;
+    this.offside = new OffsideSystem(this);   // Law 11 (rules.offsideEnabled)
+    this.passing = new PassingSystem(this);   // intent → target → quality → assist → error → trajectory
+    this.intercepts = new InterceptionSystem(this);   // who reads the ball when, and who can get to it
+    this.byId = new Map(this.players.map(p => [p.id, p]));
     this.ai = new AIDirector(this);
     this.kickoff(0);
   }
@@ -92,6 +103,8 @@ export class Match {
     e.time = this.time;
     // Per-player match stats (full-time sheet / man of the match).
     if ((e.type === 'tackle' && e.ok) || e.type === 'save') { const q = this.players.find(p => p.id === e.pid); if (q) q.st[e.type === 'save' ? 'sv' : 'tk']++; }
+    // The ball is on a new line: everyone reads it again, each after his own reaction.
+    if (NEW_LINE.has(e.type) && this.intercepts) this.intercepts.onKick(this.byId.get(e.pid));
     this.events.push(e);
   }
   // Elapsed match time in seconds (the clock counts down in timed mode, up otherwise).
@@ -205,6 +218,7 @@ export class Match {
     prof.add('players', t0);
     t0 = prof.now();
     this.updateBall(dt);
+    this.offside.step();
     prof.add('ball', t0);
   }
 
@@ -240,6 +254,10 @@ export class Match {
       this.teams[p.team].stats.passesOk++;
       if (b.wallHits > 0 && b.lastKick.kind !== 'shot') this.addStyle(p.team, STYLE.points.wallpass, 'WALL PASS', p);
     }
+    // Won back from the other side: the AI needs a moment to control it and look up.
+    const turnover = !!prev && prev.team !== p.team && p.line !== 'GK' && !silent;
+    p.ai.wonAt = turnover ? this.time : null;
+    p.ai.wonFor = turnover ? this.ai.settleTime(p) : 0;
     b.owner = p; b.inHands = false; b.passTo = null; b.flair = null; b.through = null;
     b.lastTouch = p; b.vy = 0; b.y = R;
     p.possessT = 0; p.st.to++;
@@ -333,6 +351,7 @@ export class Match {
     b.wx = b.vz / R; b.wz = -b.vx / R; b.wy = 0;          // struck along the ground: rolling spin
     d.mode = 'knock'; d.lastT = this.time; d.u = 0;
     b.lastTouch = p;
+    this.offside.touch(p, 'dribble');
     this.emit({ type: 'touch', pid: p.id, power: s });
   }
 
@@ -370,8 +389,10 @@ export class Match {
       const dq = Math.hypot(b.x - q.x, b.z - q.z);
       if (dq > DRIB.steal || dq > dist - 0.05 || b.y > 0.7) continue;
       const win = 0.4 + 0.45 * q.attrs.tackle - 0.35 * p.attrs.control + (q.jockey ? 0.1 : 0);
+      const clean = q.line === 'GK' || this.rand() < win;
+      if (this.offside.touch(q, clean ? 'tackle' : 'deflect')) return;
       this.loseBall();
-      if (q.line === 'GK' || this.rand() < win) {
+      if (clean) {
         this.gainPossession(q);
         this.teams[q.team].stats.tackles++;
         this.emit({ type: 'tackle', ok: true, pid: q.id, victim: p.id, x: b.x, z: b.z });
@@ -428,7 +449,8 @@ export class Match {
   // with a velocity built from the player's own motion, a push where he wants it,
   // and whatever of the incoming pace the touch didn't take off; then it's free
   // (knock-on dribbling) until he collects it. Returns the touch quality.
-  firstTouch(p, force = null) {
+  // extra: quality taken off for an awkward one (an interception at a stretch).
+  firstTouch(p, force = null, extra = 0) {
     const b = this.ball;
     const inV = Math.hypot(b.vx, b.vz);
     const rvx = b.vx - p.vx, rvz = b.vz - p.vz, rel = Math.hypot(rvx, rvz) || 1e-6;
@@ -437,7 +459,9 @@ export class Match {
     const front = -(ux * fx + uz * fz);                         // 1 = straight at his front
     // Intent: a human's stick, an AI's plan, or a cushion (close control held).
     let intent = null;
-    if (p.human) { const ml = Math.hypot(p.move.x, p.move.z); if (ml > 0.1 && p.move.speed > 0.3) intent = { x: p.move.x / ml, z: p.move.z / ml }; }
+    // (A human receiver being walked onto the ball by the receive assist hasn't asked for a
+    // direction: that's a neutral touch.)
+    if (p.human) { const ml = Math.hypot(p.move.x, p.move.z); if (!p.autoReceive && ml > 0.1 && p.move.speed > 0.3) intent = { x: p.move.x / ml, z: p.move.z / ml }; }
     else if (p.touchDir) intent = p.touchDir;
     const mode = force || (p.cushion ? 'cushion' : intent ? 'directed' : 'neutral');
     const near = this.nearestOpponent(p);
@@ -445,7 +469,7 @@ export class Match {
       - Math.max(0, rel - TOUCH.freePace) * TOUCH.pacePenalty
       - (front > 0.45 ? 0 : front > -0.35 ? TOUCH.side : TOUCH.behind)
       - (b.y > 0.3 ? TOUCH.airborne : 0) - (near < 1.6 ? TOUCH.pressure : 0)
-      + (mode === 'cushion' ? TOUCH.cushionBonus : 0), 0.05, 0.97);
+      + (mode === 'cushion' ? TOUCH.cushionBonus : 0) - extra, 0.05, 0.97);
     // What survives of the incoming pace; into his body, it bounces back off him.
     const keep = TOUCH.keep[mode] + (1 - q) * TOUCH.keepPoor;
     let resX = rvx * keep, resZ = rvz * keep;
@@ -473,6 +497,7 @@ export class Match {
       return q;
     }
     this.gainPossession(p);
+    if (p.ai.wonAt === this.time) p.ai.wonFor = this.ai.settleTime(p, q);   // a scruffy touch takes longer to settle
     p.dribble.mode = 'knock'; p.dribble.lastT = this.time;
     b.lastTouch = p;
     this.emit({ type: 'touch', pid: p.id, power: Math.min(1, relOut / 6) });
@@ -525,9 +550,29 @@ export class Match {
     this.onOut({ type: 'out', line: c.line, side: c.side, x: c.x, z: c.z, y: b.y });
   }
 
+  // How far from his body a player cutting out a pass can get a foot to it: furthest in
+  // front, less across him, least behind him.
+  footReach(p) {
+    const b = this.ball, dx = b.x - p.x, dz = b.z - p.z, d = Math.hypot(dx, dz) || 1;
+    const c = (dx * Math.cos(p.facing) + dz * Math.sin(p.facing)) / d;
+    const r = IC.reach;
+    return c > 0.5 ? r.front : c > -0.3 ? r.side : r.back;
+  }
+
+  // A stretched interception: a toe to it — the ball runs on, slowed and knocked off line.
+  poke(p, rel) {
+    const b = this.ball;
+    const keep = IC.pokeKeep[0] + this.rand() * (IC.pokeKeep[1] - IC.pokeKeep[0]);
+    const fx = Math.cos(p.facing), fz = Math.sin(p.facing), j = (this.rand() - 0.5) * 2.5;
+    b.vx = b.vx * keep + fx * 1.2 - fz * j; b.vz = b.vz * keep + fz * 1.2 + fx * j; b.vy = 0.5;
+    b.lastTouch = p; p.noTouch = 0.2; b.passTo = null; b.redirectT = this.time;
+    this.emit({ type: 'deflect', pid: p.id, x: b.x, y: b.y, z: b.z, speed: rel, poke: true });
+  }
+
   interact() {
     const b = this.ball;
     const bsp = Math.hypot(b.vx, b.vz);
+    const pass = this.passing.inFlight();
     // After a restart the taker can't play it again until someone else has touched it.
     if (b.restartTaker && b.lastTouch !== b.restartTaker) b.restartTaker = null;
     // closest first
@@ -550,9 +595,30 @@ export class Match {
       }
       const rvx = b.vx - p.vx, rvz = b.vz - p.vz;
       const rel = Math.hypot(rvx, rvz, b.vy * 0.5);
-      if (b.y < 0.6 && hd < PLAYER.controlRadius) {
+      // Cutting out the other side's pass is a contact, not a magnet: the foot reaches
+      // less across and behind him; one he never saw coming just hits him; at full
+      // stretch only a slow ball sticks (a quicker one is poked away); and a hard one is
+      // deflected rather than controlled.
+      const theirs = pass && pass.passer.team !== p.team;
+      if (b.y < 0.6 && hd < (theirs ? this.footReach(p) : PLAYER.controlRadius)) {
         const ctlMax = 8 + 9 * p.attrs.control;
-        if (rel < ctlMax || (b.passTo === p && rel < ctlMax + 4)) { this.firstTouch(p); return; }
+        let ctl = rel < ctlMax || (b.passTo === p && rel < ctlMax + 4);
+        let poke = false, lat = 0;
+        if (theirs) {
+          // How far off his body the ball's line (relative to him) passes: straight at him
+          // is a block or a trap; at the edge of his reach it's a stretch.
+          const rl = Math.hypot(rvx, rvz) || 1;
+          lat = Math.abs((b.x - p.x) * rvz / rl - (b.z - p.z) * rvx / rl);
+          if (!this.intercepts.reacted(p)) ctl = false;
+          else if (lat > IC.stretch) { poke = !(rel < ctlMax * IC.stretchCtl); ctl = !poke; }
+          else ctl = ctl && rel < ctlMax - IC.fastCtl;
+        }
+        if (ctl) {
+          if (!this.offside.touch(p, 'control')) this.firstTouch(p, null, theirs ? 0.06 + 0.2 * clamp((lat - 0.2) / 0.35, 0, 1) : 0);
+          return;
+        }
+        if (this.offside.touch(p, 'deflect')) return;
+        if (poke) { this.poke(p, rel); return; }
         // Heavy touch: it bounces off the shin.
         const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
         b.vx = b.vx * 0.28 + fx * 2.2 + p.vx * 0.5; b.vz = b.vz * 0.28 + fz * 2.2 + p.vz * 0.5;
@@ -562,18 +628,20 @@ export class Match {
         return;
       }
       if (b.y >= 0.6 && b.y < 1.5 && hd < 0.5) {
+        if (this.offside.touch(p, rel < 15 ? 'chest' : 'block')) return;
         if (rel < 15) this.cushion(p);
         else this.bodyBlock(p, hd);
         return;
       }
       if (b.y >= 1.5 && b.y < 2.35 && hd < 0.48) {
+        if (this.offside.touch(p, 'header')) return;
         // The man it was meant for, with nobody on him, cushions it down instead of
         // nodding it away.
         if (b.passTo === p && rel < 15 && !(p.human && p.wantShoot) && this.nearestOpponent(p) > 1.6) this.cushion(p, true);
         else this.header(p);
         return;
       }
-      if (bsp > 9 && hd < PLAYER.radius + R && b.y < 1.9) { this.bodyBlock(p, hd); return; }
+      if (bsp > 9 && hd < PLAYER.radius + R && b.y < 1.9) { if (!this.offside.touch(p, 'block')) this.bodyBlock(p, hd); return; }
     }
   }
 
@@ -591,8 +659,10 @@ export class Match {
   // was meant for him is still his (it completes when he has it under control).
   cushion(p, head = false) {
     const b = this.ball;
-    b.vx = p.vx * 0.7 + Math.cos(p.facing) * 0.6; b.vz = p.vz * 0.7 + Math.sin(p.facing) * 0.6; b.vy = head ? -1 : -0.4;
-    b.lastTouch = p; p.noTouch = 0.05;
+    // Knocked down, and he lets it drop to his feet before the next touch (re-cushioning
+    // it every tick would float it down in slow motion).
+    b.vx = p.vx * 0.7 + Math.cos(p.facing) * 0.6; b.vz = p.vz * 0.7 + Math.sin(p.facing) * 0.6; b.vy = head ? -1.2 : -1;
+    b.lastTouch = p; p.noTouch = 0.28;
     if (b.passTo !== p) b.passTo = null;
     this.emit({ type: 'chest', pid: p.id, x: b.x, y: b.y, z: b.z, head });
   }
@@ -648,6 +718,7 @@ export class Match {
       reach = 0.3 + 0.12 * ext; maxH = a.high ? 2.5 : 1.4;
     }
     if (bodyDist > reach || b.y > maxH) return false;
+    if (this.offside.touch(p, 'save')) return true;
     const keeping = p.attrs.keeping * (this.isGB(1 - p.team) ? 0.72 : 1);   // a GAMEBREAKER strike is hard to hold
     // Fast balls get parried, not held; rebounds off the cage are harder to hold still.
     const redirected = b.redirectT && this.time - b.redirectT < 1.2;
@@ -679,6 +750,13 @@ export class Match {
     const b = this.ball;
     // Ball in the +x goal = a goal for the team attacking +x.
     const scoringTeam = this.teams[0].dir === e.side ? 0 : 1;
+    // An indirect free kick straight in (nobody else touched it): a goal kick, not a goal.
+    if (b.restartKind === 'FREE_KICK' && b.restartTaker && b.restartTaker.team === scoringTeam) {
+      this.beginRestart('GOAL_KICK', 1 - scoringTeam, goalKickSpot(e.side, Math.sign(e.z) || 1));
+      return;
+    }
+    // A man in an offside position blocking the keeper's view of it: no goal, a free kick.
+    if (this.offside.goal(scoringTeam)) return;
     const kick = b.lastKick;
     const touch = b.lastTouch;
     // A deflection off a defender still counts for the shooter; it's only an own goal
@@ -731,7 +809,8 @@ export class Match {
   }
 
   // ------------------------------------------------------------------ out of play & restarts
-  // One explicit state machine for every restart — KICKOFF · THROW_IN · CORNER · GOAL_KICK:
+  // One explicit state machine for every restart — KICKOFF · THROW_IN · CORNER · GOAL_KICK ·
+  // FREE_KICK (indirect, for offside):
   //   DEAD   the ball is out: it runs on (to the boards), players pull up, the call is made
   //   SETUP  the ball is placed, the taker stands at it, everyone takes his spot
   //   READY  live the moment the taker plays it (the human's input or the AI's choice)
@@ -751,17 +830,18 @@ export class Match {
     else this.beginRestart('GOAL_KICK', defending, goalKickSpot(e.side, zs));
   }
 
-  beginRestart(type, team, spot) {
+  beginRestart(type, team, spot, reason = null) {
     const b = this.ball;
     if (b.owner && type !== 'KICKOFF') this.loseBall();
-    b.passTo = null; b.flair = null; b.through = null; b.restartTaker = null;
+    b.passTo = null; b.flair = null; b.through = null; b.restartTaker = null; b.restartKind = null;
+    this.offside.reset();
     for (const p of this.players) { p.closeControl = false; p.jockey = false; p.cushion = false; p.touchDir = null; }
     this.restart = { type, team, spot, taker: null, state: type === 'KICKOFF' ? 'SETUP' : 'DEAD', t: 0, readyT: 0, aiAt: 0 };
     this.phase = 'restart';
     if (type === 'KICKOFF') return;
     this.teams[team].stats[RESTART_STAT[type]]++;
     this.emit({ type: 'whistle', kind: 'out' });
-    this.emit({ type: 'restart', kind: type, team, x: spot.x, z: spot.z });
+    this.emit({ type: 'restart', kind: type, team, x: spot.x, z: spot.z, reason });
   }
 
   // Who takes it: the keeper takes goal kicks; the best crosser among the wide and
@@ -770,6 +850,12 @@ export class Match {
     const team = this.teamPlayers(r.team), out = team.filter(p => p.line !== 'GK');
     const d = p => Math.hypot(p.x - r.spot.x, p.z - r.spot.z);
     if (r.type === 'GOAL_KICK') return this.keeper(r.team) || out.sort((a, c) => d(a) - d(c))[0];
+    if (r.type === 'FREE_KICK') {
+      // In his own area the keeper takes it; anywhere else the nearest outfielder.
+      const gk = this.keeper(r.team);
+      if (gk && inKeeperArea(r.spot.x, r.spot.z, this.ownGoalX(r.team), 0)) return gk;
+      return out.sort((a, c) => d(a) - d(c))[0];
+    }
     if (r.type === 'CORNER') {
       const crossers = out.filter(p => p.line !== 'DEF' || p.roleDef.width >= 0.9);
       return (crossers.length ? crossers : out).sort((a, c) => (c.attrs.pass * 2 + c.attrs.skill) - (a.attrs.pass * 2 + a.attrs.skill) || d(a) - d(c))[0];
@@ -787,6 +873,7 @@ export class Match {
     // corner flag, upfield from a goal kick.
     const ang = r.type === 'THROW_IN' ? Math.atan2(-Math.sign(sp.z), 0)
       : r.type === 'CORNER' ? Math.atan2(-sp.z, Math.sign(sp.x) * (PITCH.halfL - PITCH.boxR * 0.6) - sp.x)
+      : r.type === 'FREE_KICK' ? Math.atan2(-sp.z * 0.5, this.teams[r.team].dir * 20)
       : Math.atan2(-sp.z * 0.3, -sp.x);
     const fx = Math.cos(ang), fz = Math.sin(ang);
     if (r.type === 'THROW_IN') { taker.x = sp.x; taker.z = sp.z + Math.sign(sp.z) * 0.25; }
@@ -884,7 +971,7 @@ export class Match {
       ok = true;
     } else ok = this.requestKick(p, kind, params);
     if (!ok) { this.restart = r; this.phase = 'restart'; return false; }
-    this.ball.restartTaker = p;
+    this.ball.restartTaker = p; this.ball.restartKind = r.type;
     return true;
   }
 
@@ -1002,6 +1089,9 @@ export class Match {
     const maxH = a.type === 'volley' ? 1.5 : 1.0;
     if (!this.ballReachable(p, maxH)) { this.emit({ type: 'whiff', pid: p.id }); return; }
     const wasOwner = b.owner === p;
+    if (!wasOwner && this.offside.touch(p, 'kick')) return;
+    // How settled the ball was (a first-time ball is harder to pass well).
+    const feel = { held: wasOwner ? p.possessT : 0, rel: Math.hypot(b.vx - p.vx, b.vz - p.vz) };
     if (wasOwner) this.loseBall();
     b.inHands = false;
     const T = this.teams[p.team];
@@ -1036,27 +1126,15 @@ export class Match {
       const s = groundPassSpeed(d, 5);
       b.y = 0.5;
       v = { vx: (a.target.x - b.x) / d * s, vy: 0.6, vz: (a.target.z - b.z) / d * s, wy: 0 };
-    } else if (a.type === 'lob' || a.type === 'clear') {
-      const L = solveLob(b.x, Math.max(b.y, R), b.z, a.target.x, a.target.z, a.type === 'clear' ? 0.5 : 0.58, a.type === 'clear' ? KICK.lobSpin * 0.5 : KICK.lobSpin);
+    } else if (a.type === 'clear') {
+      // A clearance: height and distance, not a pass.
+      const L = solveLob(b.x, Math.max(b.y, R), b.z, a.target.x, a.target.z, 0.5, KICK.lobSpin * 0.5);
       const e = (1 - p.attrs.pass) * 0.06;
       const ang = noise(e), c = Math.cos(ang), s = Math.sin(ang);
       v = { vx: L.vx * c - L.vz * s, vy: L.vy * (1 + noise(e)), vz: L.vx * s + L.vz * c, wx: L.wx * c - L.wz * s, wy: 0, wz: L.wx * s + L.wz * c };
-      if (a.type === 'lob') T.stats.passes++;          // clearances aren't passes
-    } else if (a.angle != null) {
-      // Played at an explicit angle (wall pass off the cage).
-      const e = (1 - p.attrs.pass) * 0.03;
-      const ang = a.angle + noise(e), s = a.speed ?? 14;
-      v = { vx: Math.cos(ang) * s, vy: 0, vz: Math.sin(ang) * s, wy: 0 };
-      T.stats.passes++;
     } else {
-      // Ground pass / through ball, aimed at the receiver's predicted run.
-      const tgt = a.receiver ? this.leadTarget(p, a.receiver, a.type === 'through') : a.target;
-      const dx = tgt.x - b.x, dz = tgt.z - b.z, d = Math.hypot(dx, dz) || 1;
-      let s = a.speed ?? clamp(groundPassSpeed(d, a.type === 'through' ? 7 : 6 + d * 0.2), KICK.passMin, KICK.passMax);
-      if (a.power != null) s = clamp(s * (0.85 + 0.5 * a.power), KICK.passMin, KICK.passMax + 6);
-      const e = (1 - p.attrs.pass) * 0.05 + (a.flair ? 0.02 : 0);
-      const ang = Math.atan2(dz, dx) + noise(e);
-      v = { vx: Math.cos(ang) * s, vy: 0, vz: Math.sin(ang) * s, wy: 0 };
+      // Every pass — ground, through, lofted, the cage wall pass — human or AI.
+      v = this.passing.execute(p, a, feel);
       T.stats.passes++;
     }
 
@@ -1071,6 +1149,9 @@ export class Match {
     b.passTo = a.receiver || null;
     b.passUntil = this.time + 2.2;
     p.noTouch = 0.24;
+    this.offside.snapshot(p, a.type);      // who is offside is decided now, as he plays it
+    const pc = this.passing.ctx && this.passing.ctx.t === this.time ? this.passing.ctx : null;
+    if (pc) pc.receiverOffside = !!(this.offside.snap && this.offside.snap.receiverOffside);
     const speed = Math.hypot(b.vx, b.vy, b.vz);
     if (a.type === 'shot' || a.type === 'volley') {
       const onT = predictPath(b, 3, 1 / 60).goal === T.dir;
@@ -1079,30 +1160,12 @@ export class Match {
       if (this.isGB(p.team)) this.emit({ type: 'gbStrike', pid: p.id, team: p.team, x: b.x, z: b.z, onTarget: onT });
       if (a.aim.finesse) this.addStyle(p.team, STYLE.points.finesse, null, p);
     }
-    this.emit({ type: 'kick', pid: p.id, kind: a.type, speed, x: b.x, y: b.y, z: b.z, finesse: !!a.aim?.finesse, flair: !!a.flair });
+    this.emit({ type: 'kick', pid: p.id, kind: a.type, speed, x: b.x, y: b.y, z: b.z, finesse: !!a.aim?.finesse, flair: !!a.flair, pass: pc ? { type: pc.type, tier: pc.tier, quality: pc.quality, human: pc.human, x: pc.intended.x, z: pc.intended.z } : null });
   }
 
-  // Receiver lead: aim where the receiver will be when the ball arrives.
+  // Receiver lead: where the receiver takes a ground pass (or a through ball) from here.
   leadTarget(p, r, through) {
-    const b = this.ball;
-    let tx = r.x, tz = r.z;
-    for (let i = 0; i < 3; i++) {
-      const d = Math.hypot(tx - b.x, tz - b.z);
-      const s = clamp(groundPassSpeed(d, through ? 7 : 6 + d * 0.2), KICK.passMin, KICK.passMax);
-      const t = Math.min(rollTime(s, d), 2.5);
-      if (through) {
-        // lead into space toward goal along the run
-        const dir = this.teams[r.team].dir;
-        const rx = r.speed > 1 ? r.vx : dir * 5, rz = r.speed > 1 ? r.vz : 0;
-        const rl = Math.hypot(rx, rz) || 1;
-        const runS = Math.max(r.speed, 5.5);
-        tx = r.x + rx / rl * runS * (t + KICK.throughLead * 0.4);
-        tz = r.z + rz / rl * runS * (t + KICK.throughLead * 0.4);
-      } else {
-        tx = r.x + r.vx * t * 0.85; tz = r.z + r.vz * t * 0.85;
-      }
-    }
-    return { x: clamp(tx, -PITCH.halfL + 0.8, PITCH.halfL - 0.8), z: clamp(tz, -PITCH.halfW + 0.8, PITCH.halfW - 0.8) };
+    return receptionPoint(this, r, this.ball.x, this.ball.z, through ? 'through' : 'short');
   }
 
   // Shot planning — shared by the human preview, the human strike and the AI.
@@ -1172,7 +1235,7 @@ export class Match {
     const o = b.owner;
     this.teams[p.team].stats.tackles++;
     if (!o) {
-      if (dBall < 0.8 && b.y < 0.6) this.gainPossession(p);
+      if (dBall < 0.8 && b.y < 0.6 && !this.offside.touch(p, 'tackle')) this.gainPossession(p);
       return;
     }
     if (o.team === p.team || b.inHands) return;
@@ -1186,6 +1249,7 @@ export class Match {
     let chance = 0.32 + 0.55 * p.attrs.tackle - 0.32 * o.attrs.control + 0.14 * front + (o.closeControl ? -0.12 : 0) + (o.possessT < 0.3 ? 0.1 : 0);
     if (this.isGB(o.team)) chance -= 0.15;
     if (this.rand() < clamp(chance, 0.08, 0.9)) {
+      if (this.offside.touch(p, 'tackle')) return;
       if (this.rand() < 0.55) this.gainPossession(p);
       else {
         this.loseBall();
@@ -1209,6 +1273,7 @@ export class Match {
     if (!(o && o.team === p.team) && !b.inHands && b.y < 0.55 && Math.hypot(b.x - footX, b.z - footZ) < 0.6) {
       if (o && o.action && ACTIONS[o.action.type].immune) return;
       a.hit = true;
+      if (this.offside.touch(p, 'tackle')) return;
       if (o) { this.loseBall(); o.noTouch = 0.45; this.startAction(o, 'stumble', { dur: 0.7 }); o.stun = 0.5; }
       const side = (this.rand() - 0.5) * 4;
       b.vx = fx * 6.5 - fz * side; b.vz = fz * 6.5 + fx * side; b.vy = 1.0;
@@ -1325,20 +1390,13 @@ export class Match {
     return Math.min(Math.hypot(b.x - p.x, b.z - p.z), Math.hypot(fx - p.x, fz - p.z)) < PLAYER.kickReach + 0.25 && b.y < maxH;
   }
 
-  // opts.lead: a lofted through ball (lob into the receiver's run); opts.contact: longer wind-up.
+  // A human pass (the PassingSystem decides who it's for and how it's played).
+  // kind: the button ('pass' · 'through' · 'lob'); power: the charge;
+  // opts.lead: a lofted ball into a run; opts.driven: a driven pass; opts.contact: longer wind-up.
   requestPass(p, dirX, dirZ, kind = 'pass', power = null, flair = false, opts = {}) {
-    const extra = opts.contact != null ? { contact: opts.contact } : {};
-    const r = this.pickReceiver(p, dirX, dirZ, opts.lead ? 'through' : kind);
-    if (!r) {
-      // No one there: play it into space in that direction.
-      const hl = Math.hypot(dirX, dirZ);
-      const ang = hl > 0.2 ? Math.atan2(dirZ, dirX) : p.facing;
-      const dist = this.ai.R.space[kind === 'lob' ? 1 : 0];
-      const target = { x: clamp(p.x + Math.cos(ang) * dist, -PITCH.halfL + 1, PITCH.halfL - 1), z: clamp(p.z + Math.sin(ang) * dist, -PITCH.halfW + 1, PITCH.halfW - 1) };
-      return this.requestKick(p, kind, { target, power, flair, ...extra });
-    }
-    const target = kind === 'lob' ? (opts.lead ? this.leadTarget(p, r, true) : { x: r.x + r.vx * 1.1, z: r.z + r.vz * 1.1 }) : null;
-    return this.requestKick(p, kind, { receiver: r, target, power, flair, ...extra });
+    const plan = this.passing.plan(p, { dirX, dirZ, button: kind, power, flair, lead: !!opts.lead, driven: !!opts.driven });
+    if (opts.contact != null && plan.params.contact == null) plan.params.contact = opts.contact;
+    return this.requestKick(p, plan.action, plan.params);
   }
 
   // Double-tap pass: a ground pass still winding up becomes a dinked (lofted) pass.
@@ -1346,7 +1404,8 @@ export class Match {
     const a = p.action, b = this.ball;
     if (!a || a.type !== 'pass' || a.fired || a.angle != null || b.owner !== p || b.inHands) return false;
     const r = a.receiver;
-    a.type = 'lob';
+    a.type = 'lob'; a.passType = 'lob';
+    if (a.intent) a.intent.type = 'lob';
     if (r) a.target = { x: r.x + r.vx * 1.1, z: r.z + r.vz * 1.1 };
     a.contact = Math.max(a.t + 0.04, ACTIONS.lob.contact);
     a.dur = ACTIONS.lob.dur + (a.contact - ACTIONS.lob.contact);
@@ -1363,22 +1422,6 @@ export class Match {
       if (dist < bd && ang < 0.8 && d.line !== 'GK') { bd = dist; target = d; }
     }
     return target;
-  }
-
-  pickReceiver(p, dirX, dirZ, kind) {
-    const hl = Math.hypot(dirX, dirZ);
-    const ang = hl > 0.2 ? Math.atan2(dirZ, dirX) : p.facing;
-    let best = null, bestS = Infinity;
-    for (const m of this.mates(p)) {
-      if (m.line === 'GK' && kind !== 'pass') continue;
-      const dx = m.x - p.x, dz = m.z - p.z, d = Math.hypot(dx, dz);
-      if (d < 2) continue;
-      const diff = Math.abs(angleDiff(ang, Math.atan2(dz, dx)));
-      if (diff > (hl > 0.2 ? 0.95 : 1.4)) continue;
-      const s = d * 0.35 + diff * 9 + (m.line === 'GK' ? 8 : 0);
-      if (s < bestS) { bestS = s; best = m; }
-    }
-    return best;
   }
 
   requestShot(p, aim) {

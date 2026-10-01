@@ -28,9 +28,11 @@ export default function () {
       `shot ${R.shot.toFixed(0)} m · pass ${R.groundPass.toFixed(0)} m · long ${R.longPass.toFixed(0)} m · support ${R.support[1].toFixed(1)} m · zone ${R.markZone.toFixed(0)} m`);
   }
 
-  // 3) AI-vs-AI in every open format.
+  // 3) AI-vs-AI in every open format (3 minutes each: with offside, fair interceptions and
+  //    the AI settling after a turnover, a big pitch sees fewer stoppages and chances a
+  //    minute than it used to).
   for (const format of ['7v7', '9v9', '11v11']) {
-    const runs = [1, 2].map(seed => playOpen(format, 120, seed));
+    const runs = [1, 2].map(seed => playOpen(format, 180, seed));
     const sum = k => runs.reduce((a, r) => a + r[k], 0);
     const restarts = runs.reduce((a, r) => a + Object.values(r.restarts).reduce((x, y) => x + y, 0), 0);
     const pass = sum('passesOk') / Math.max(1, sum('passes'));

@@ -9,7 +9,7 @@
 //     wall pass / dribble / skill / shield.
 // Difficulty changes reaction time, decision noise and press intensity only.
 // =====================================================================
-import { AI } from '../../config.js';
+import { AI, footballGameplayConfig as GP, byDiff } from '../../config.js';
 import { clamp } from '../../util/math.js';
 import { predictPath } from '../ball.js';
 import { maxSpeed } from '../players.js';
@@ -31,13 +31,12 @@ export class AIDirector {
     this.m = m;
     this.teamT = 0;
     this.team = [this.blankTeam(), this.blankTeam()];
-    this.ballPred = null;
     this.restartSpots = new Map();   // player id → spot for the set piece being taken
     this.R = aiRanges(m.cfg.rules);  // distances scaled to this match's pitch
   }
   // For telemetry: the scaled ranges in use.
   ranges() { const R = this.R; return { s: R.s, g: R.g, shot: Math.round(R.shot), pass: Math.round(R.groundPass), long: Math.round(R.longPass), threat: Math.round(R.threat) }; }
-  blankTeam() { return { phase: 'LOOSE', presser: null, presser2: null, marks: new Map(), chasers: new Set(), runners: new Set(), anchors: new Map(), forcePress: false, gkRush: false }; }
+  blankTeam() { return { phase: 'LOOSE', presser: null, presser2: null, marks: new Map(), chasers: new Set(), runners: new Set(), anchors: new Map(), forcePress: false, gkRush: false, focus: null, cutter: null }; }
 
   get diff() { return this.m.opts.difficulty; }
   reaction() { return 0.06 + 0.32 * (1 - this.diff); }
@@ -47,7 +46,6 @@ export class AIDirector {
     this.teamT -= dt;
     if (this.teamT <= 0) {
       this.teamT = TEAM_TICK;
-      this.ballPred = m.ball.owner ? null : predictPath(m.ball, 2.5, 1 / 30);
       this.teamThink(0); this.teamThink(1);
     }
     for (const p of m.players) {
@@ -67,7 +65,17 @@ export class AIDirector {
   // ------------------------------------------------------------------ team brain
   teamThink(t) {
     const m = this.m, T = this.team[t], b = m.ball, o = b.owner;
-    T.phase = o ? (o.team === t ? 'ATTACK' : 'DEFEND') : 'LOOSE';
+    // A pass on its way is still that side's ball: they attack, the other side defends it.
+    const fl = o ? null : m.passing.inFlight();
+    const poss = o ? o.team : fl ? fl.passer.team : -1;
+    T.phase = poss < 0 ? 'LOOSE' : poss === t ? 'ATTACK' : 'DEFEND';
+    // Where the play is going, as this side sees it: the carrier; for our own pass, the man
+    // it's for; for theirs, whoever we read it's for (from its line — no one is told).
+    if (o) T.focus = { p: o, x: o.x, z: o.z };
+    else if (fl && poss === t) T.focus = { p: fl.receiver, x: fl.intended.x, z: fl.intended.z };
+    else if (fl) T.focus = m.intercepts.readTarget(t) || { p: null, x: b.x, z: b.z };
+    else T.focus = null;
+    if (!fl) T.cutter = null;
     const mates = m.teamPlayers(t);
     const dir = m.teams[t].dir;
     // An AI side fires its GAMEBREAKER when it has the ball in the attacking half.
@@ -77,6 +85,9 @@ export class AIDirector {
     // dropped by his role for the phase, and the whole shape shifted toward the ball.
     const bu = (b.x * dir + PITCH.halfL) / PITCH.length;
     const bv = 0.5 + dir * b.z / PITCH.width;
+    // In possession, the shape stays onside: nobody's spot is beyond the offside line
+    // until the ball is played (runners go when it is).
+    T.onside = T.phase === 'ATTACK' && m.offside.enabled ? m.offside.limit(t) - GP.offside.aiMargin : Infinity;
     T.anchors.clear();
     for (const p of mates) {
       let u = p.form.x, v = p.form.y;
@@ -91,7 +102,9 @@ export class AIDirector {
         if (p.line === 'DEF') u = Math.min(u, T.phase === 'ATTACK' ? 0.5 + 0.25 * (1 - r.hold) : 0.38);
         u = clamp(u, 0.1, 0.88);
       }
-      T.anchors.set(p.id, formationToWorld(u, clamp(v, 0.08, 0.92), dir));
+      const w = formationToWorld(u, clamp(v, 0.08, 0.92), dir);
+      if (p.line !== 'GK') w.x = this.onside(t, w.x);
+      T.anchors.set(p.id, w);
     }
 
     // Loose ball: the fastest to the ball chases (by predicted intercept time).
@@ -106,17 +119,18 @@ export class AIDirector {
     T.presser = null; T.marks.clear();
     if (T.phase === 'DEFEND') {
       const outfield = mates.filter(p => p.line !== 'GK');
+      const f = T.focus;
       let best = null, bt = Infinity;
-      for (const p of outfield) { const tt = reachTime(p, o.x, o.z, 0); if (tt < bt) { bt = tt; best = p; } }
+      for (const p of outfield) { if (p === T.cutter) continue; const tt = reachTime(p, f.x, f.z, 0); if (tt < bt) { bt = tt; best = p; } }
       T.presser = best;
       // Human asked for teammate pressure (or the human is already pressing and wants help).
       T.presser2 = null;
       if (T.forcePress) {
         let b2 = null, bt2 = Infinity;
-        for (const p of outfield) { if (p.human || p === best) continue; const tt = reachTime(p, o.x, o.z, 0); if (tt < bt2) { bt2 = tt; b2 = p; } }
+        for (const p of outfield) { if (p.human || p === best) continue; const tt = reachTime(p, f.x, f.z, 0); if (tt < bt2) { bt2 = tt; b2 = p; } }
         if (best && best.human) T.presser2 = b2; else if (b2 && !best) T.presser = b2;
       }
-      const attackers = m.teamPlayers(1 - t).filter(a => a !== o && a.line !== 'GK');
+      const attackers = m.teamPlayers(1 - t).filter(a => a !== f.p && a.line !== 'GK');
       const free = outfield.filter(p => p !== best && p !== T.presser2);
       const pairs = [];
       for (const d of free) for (const a of attackers) {
@@ -138,8 +152,9 @@ export class AIDirector {
 
     // Attacking: one forward-thinking player makes a run in behind (by role: forwards,
     // wingers and wing-backs — never the back line).
-    T.runners.clear();
-    if (T.phase === 'ATTACK') {
+    // (A pass in flight keeps the runs that were on when it was played.)
+    if (!fl) T.runners.clear();
+    if (T.phase === 'ATTACK' && o) {
       let best = null, bs = -Infinity;
       for (const p of mates) {
         if (p === o || p.line === 'GK' || p.roleDef.runs < 0.3) continue;
@@ -152,21 +167,22 @@ export class AIDirector {
     }
   }
 
-  // Predicted intercept point/time for a player on the free ball: the first point of
-  // its path he can get to that's no higher than maxY (2.2 m: a header).
-  intercept(p, maxY = 2.2) {
-    const b = this.m.ball;
-    if (b.owner) return { t: reachTime(p, b.x, b.z, 0), x: b.x, z: b.z };
-    const pred = this.ballPred;
-    if (!pred) return { t: reachTime(p, b.x, b.z, 0), x: b.x, z: b.z };
-    for (let i = 0; i < pred.pts.length; i++) {
-      const q = pred.pts[i];
-      const tb = i / 30;
-      if (q.y > maxY) continue;
-      if (reachTime(p, q.x, q.z, 0.1) <= tb) return { t: tb, x: q.x, z: q.z };
-    }
-    const e = pred.pts[pred.pts.length - 1];
-    return { t: reachTime(p, e.x, e.z, 0.1), x: e.x, z: e.z };
+  // Keep a spot (world x) behind team t's offside line while it has the ball.
+  onside(t, x) {
+    const lim = this.team[t].onside, dir = this.m.teams[t].dir;
+    return lim === Infinity || lim === undefined ? x : Math.min(x * dir, Math.max(lim, 0)) * dir;
+  }
+
+  // Where a player can meet the free ball, no higher than maxY (2.2 m: a header): from
+  // his side's read of its path and after his reaction (see InterceptionSystem); exact
+  // for the human's switching.
+  intercept(p, maxY = 2.2, exact = false) { return this.m.intercepts.intercept(p, maxY, exact); }
+
+  // After winning the ball back: the time to get it under control (worse with a poorer
+  // touch) and look up before deciding (s).
+  settleTime(p, touch = 0.6) {
+    const d = this.diff, P = GP.possession;
+    return byDiff(P.control, d) * (1.4 - 0.8 * touch) + byDiff(P.scan, d) * (1.15 - 0.3 * p.attrs.pass);
   }
 
   setState(p, s, immediate = false) {
@@ -185,6 +201,19 @@ export class AIDirector {
 
     if (b.owner === p) { this.setState(p, 'ATTACK', true); return this.attackThink(p); }
     if (b.passTo === p) { this.setState(p, 'RECEIVE', true); return; }
+    // Nobody re-thinks before he has picked up the last strike: until then he carries on.
+    if (!m.intercepts.reacted(p)) { ai.label = ai.state; return; }
+
+    if (T.phase === 'DEFEND' && !b.owner) {
+      // An opponent's pass in flight: one man goes to cut it out where he can beat the
+      // ball to its line (by his read of it); a better-placed one can take over.
+      const ic = m.intercepts.intercept(p);
+      if (ic.feasible && ic.t < 1.8) {
+        const cur = T.cutter && T.cutter !== p ? m.intercepts.intercept(T.cutter) : null;
+        if (!cur || !cur.feasible || ic.t < cur.t - 0.15) T.cutter = p;
+      } else if (T.cutter === p) T.cutter = null;
+      if (T.cutter === p) { this.setState(p, 'CHASE', true); ai.label = 'CUT OUT'; return; }
+    }
 
     if (T.phase === 'LOOSE') {
       if (T.chasers.has(p)) this.setState(p, 'CHASE', b.lastKick && b.lastKick.team !== p.team);
@@ -195,7 +224,7 @@ export class AIDirector {
       if (ai.state === 'RUN' || ai.pending === 'RUN') ai.spot = this.runSpot(p);
     } else {
       if (T.presser === p || T.presser2 === p) this.setState(p, 'PRESS', T.presser2 === p);
-      else if (T.marks.has(p.id)) this.setState(p, 'MARK');
+      else if (T.marks.has(p.id)) { this.setState(p, 'MARK'); ai.mark = T.marks.get(p.id); }
       else this.setState(p, 'COVER');
     }
     ai.label = ai.state;
@@ -228,14 +257,24 @@ export class AIDirector {
       const s = clamp(open / 5, 0, 1) * 0.5 + threat(m, p.team, x, z) * 0.9 + lane * 0.4 + clamp(spacing / 5, 0, 1) * 0.25 - Math.hypot(x - anc.x, z - anc.z) * 0.02;
       if (s > bs) { bs = s; best = { x, z }; }
     }
-    return best;
+    return { x: this.onside(p.team, best.x), z: best.z };
   }
 
   runSpot(p) {
-    const m = this.m, dir = m.teams[p.team].dir;
+    const m = this.m, dir = m.teams[p.team].dir, ai = p.ai;
     const x = clamp(p.x + dir * this.R.run, -PITCH.halfL + 3, PITCH.halfL - 3);
-    const z = clamp(p.z * 0.6, -PITCH.halfW + 2, PITCH.halfW - 2);
-    return { x, z };
+    let z = clamp(p.z * 0.6, -PITCH.halfW + 2, PITCH.halfW - 2);
+    const ox = this.onside(p.team, x);
+    if (ox !== x) {
+      // Held by the offside line: on the shoulder of the last man, curving across it rather
+      // than standing on it — so he's already going when the ball is played.
+      if (!ai.runSide || Math.abs(p.z - ai.runZ) < 1.2) {
+        ai.runSide = -(ai.runSide || Math.sign(p.z) || 1);
+        ai.runZ = clamp(p.z + ai.runSide * 6, -PITCH.halfW + 3, PITCH.halfW - 3);
+      }
+      z = ai.runZ;
+    } else ai.runSide = 0;
+    return { x: ox, z };
   }
 
   // Utility-scored decision for the ball carrier.
@@ -273,6 +312,20 @@ export class AIDirector {
       opts.push({ kind: 'skill', name: 'roulette', u: 0.04 + sk * 0.12 + 0.04 * shieldT, label: 'ROULETTE' });
       opts.push({ kind: 'skill', name: 'dragback', u: 0.03 + sk * 0.08 + 0.04 * shieldT, label: 'DRAG BACK' });
     }
+
+    // Just won it back: get it under control and look up before deciding (no instant
+    // counter). Until then he keeps it — carries it, shields it — or, pressed hard, plays a
+    // safe pass.
+    if (ai.wonAt != null && m.time - ai.wonAt < ai.wonFor) {
+      const scanning = m.time - ai.wonAt > ai.wonFor * 0.45;
+      const keep = opts.filter(o => o.kind === 'dribble' || o.kind === 'shield' || ((scanning || press < 1.2) && o.kind === 'pass' && o.risk < GP.possession.safeRisk));
+      // Carry it away from the nearest opponent (protect it) rather than stand on it.
+      let near = null, nd = 99;
+      for (const o of m.opponents(p)) { const dd = Math.hypot(o.x - p.x, o.z - p.z); if (dd < nd) { nd = dd; near = o; } }
+      if (near && nd < 4) keep.push({ kind: 'dribble', angle: Math.atan2(p.z - near.z, p.x - near.x), u: 0.06, label: 'PROTECT' });
+      opts.length = 0; opts.push(...keep);
+      ai.label = scanning ? 'SCAN' : 'CONTROL';
+    } else ai.wonAt = null;
 
     // Decision noise scales with difficulty (lower difficulty = sloppier choices).
     const noise = 0.1 * (1 - this.diff);
@@ -363,6 +416,9 @@ export class AIDirector {
         const ic = this.intercept(p);
         p.sprinting = true;
         this.goTo(p, ic.x, ic.z, maxSpeed(p, true) * (0.85 + 0.15 * d), 0.1);
+        // Cutting out their pass: kill it (cushion) — get it under control first. A loose
+        // ball: the usual first-touch plan.
+        if (T.cutter === p) { p.cushion = true; p.touchDir = null; } else this.planTouch(p, ic);
         break;
       }
       case 'SUPPORT': case 'RUN': {
@@ -374,8 +430,10 @@ export class AIDirector {
         break;
       }
       case 'PRESS': {
-        const o = b.owner;
-        if (!o) { this.stop(p); break; }
+        // The carrier — or, with a pass on its way, the man we read it's for: get to him as
+        // it arrives. (Before he's read it, he carries on as he was.)
+        const o = b.owner || (T.focus && T.focus.p && T.focus.p.team !== p.team ? T.focus.p : null);
+        if (!o) break;
         const g = { x: m.ownGoalX(p.team), z: 0 };
         const gx = g.x - o.x, gz = g.z - o.z, gl = Math.hypot(gx, gz) || 1;
         const dist = Math.hypot(o.x - p.x, o.z - p.z);
@@ -410,13 +468,20 @@ export class AIDirector {
         break;
       }
       case 'MARK': {
-        const a = T.marks.get(p.id);
-        if (!a) { this.stop(p); break; }
-        // Goal-side of the man, shaded toward the ball; step in if a pass is coming to him.
+        const a = T.marks.get(p.id) || ai.mark;
+        if (!a || !a.active) { this.stop(p); break; }
+        // Goal-side of the man, shaded into the lane between him and the ball (more so on
+        // a higher level).
         const g = { x: m.ownGoalX(p.team), z: 0 };
         const gx = g.x - a.x, gz = g.z - a.z, gl = Math.hypot(gx, gz) || 1;
-        let tx = a.x + gx / gl * 1.5 + (b.x - a.x) * 0.12, tz = a.z + gz / gl * 1.5 + (b.z - a.z) * 0.12;
-        if (b.passTo === a) { const ic = this.intercept(p); tx = ic.x; tz = ic.z; p.sprinting = true; }
+        const lx = b.x - a.x, lz = b.z - a.z, ll = Math.hypot(lx, lz) || 1;
+        const lane = Math.min(GP.defending.laneMax, ll * byDiff(GP.defending.lane, d));
+        let tx = a.x + gx / gl * 1.5 * (1 - lane / 4) + lx / ll * lane, tz = a.z + gz / gl * 1.5 * (1 - lane / 4) + lz / ll * lane;
+        // We read the ball as his: close him down to meet it with him (not a magic step
+        // into a lane we can't reach — cutting it out is the CUT OUT state's job).
+        if (!b.owner && T.focus && T.focus.p === a) {
+          tx = a.x + gx / gl * 0.9; tz = a.z + gz / gl * 0.9; p.sprinting = true;
+        }
         this.goTo(p, tx, tz, maxSpeed(p, p.sprinting || Math.hypot(tx - p.x, tz - p.z) > 4), 0.3);
         if (p.speed < 1) p.faceTarget = { x: b.x, z: b.z };
         break;
@@ -757,11 +822,20 @@ export class AIDirector {
       const short = m.mates(p).filter(q => q.line !== 'GK').sort((a, c) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(c.x - p.x, c.z - p.z))[0];
       return m.takeRestart(p, 'pass', { receiver: short });
     }
-    // Goal kick: short to a free centre-back, or long toward the most advanced man.
+    if (r.type === 'FREE_KICK') {
+      // Indirect: it has to be played to someone. A safe one if there is one, else long.
+      const opts = evalPasses(m, p).filter(o => (o.kind === 'pass' || o.kind === 'lob') && o.risk < 0.35);
+      if (opts.length && opts[0].u > -0.4) {
+        const o = opts[0];
+        return m.takeRestart(p, o.kind === 'lob' ? 'lob' : 'pass', o.kind === 'lob' ? { receiver: o.r, target: o.lead } : { receiver: o.r });
+      }
+    }
+    // Goal kick (and a free kick with nothing on): short to a free centre-back, or long
+    // toward the most advanced man (on his side of the offside line).
     const short = evalPasses(m, p).filter(o => o.kind === 'pass' && o.risk < 0.3);
     if (short.length && short[0].u > -0.3 && m.rand() < 0.7) return m.takeRestart(p, 'pass', { receiver: short[0].r });
     const fwd = m.mates(p).filter(q => q.line !== 'GK').sort((a, c) => (c.x - a.x) * dir)[0];
-    const tgt = fwd ? clampToField(fwd.x - dir * 3, fwd.z, 2) : { x: 0, z: 0 };
+    const tgt = fwd ? clampToField(this.onside(p.team, fwd.x - dir * 3), fwd.z, 2) : { x: 0, z: 0 };
     return m.takeRestart(p, 'lob', { target: tgt, receiver: fwd || null });
   }
 

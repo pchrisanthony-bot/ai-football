@@ -25,6 +25,7 @@ import { drillVariants, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
 import { prof } from './util/profiler.js';
 import { makeTelemetry, telemetryText } from './game/telemetry.js';
+import { MODE_LABELS } from './sim/passing/assist.js';
 
 const view = document.getElementById('view');
 const ui = document.getElementById('ui');
@@ -78,7 +79,12 @@ const hud = new HUD(ui);
 const screens = document.createElement('div');
 ui.appendChild(screens);
 
-const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0 };
+const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0, offside: 0, assist: 0 };
+// Rules and pass assist (footballGameplayConfig): offside AUTO follows the format (off in
+// the cage, on in open play); pass assist is the player's, and can change mid-match.
+const OFFSIDE = [{ label: 'AUTO' }, { label: 'ON' }, { label: 'OFF' }];
+const ASSIST_IDS = ['assisted', 'semi', 'manual', 'arcade'];
+const ASSIST = ASSIST_IDS.map(id => ({ label: MODE_LABELS[id] }));
 const GFX = ['AUTO', 'LOW', 'MEDIUM', 'HIGH', 'ULTRA'];
 
 // ---- performance governor: pick the best quality that holds ~60 fps on this machine.
@@ -188,6 +194,8 @@ function toSetup(spectate = false) {
     formationItem,
     { label: 'MATCH', options: MODES, value: settings.mode, onChange: v => settings.mode = v },
     { label: 'AI LEVEL', options: DIFFS, value: settings.diff, onChange: v => settings.diff = v },
+    { label: 'OFFSIDE', options: OFFSIDE, value: settings.offside, onChange: v => settings.offside = v },
+    { label: 'PASS ASSIST', options: ASSIST, value: settings.assist, onChange: v => settings.assist = v },
     venueItem,
     { label: 'WEATHER', options: WEATHER, value: settings.weather, onChange: v => settings.weather = v },
     { label: 'GRAPHICS', options: GFX, value: settings.gfx, onChange: v => { settings.gfx = v; applyGfx(); } },
@@ -207,6 +215,7 @@ function newMatch() {
   return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
     difficulty: DIFFS[settings.diff].v, seed,
+    offside: settings.offside === 0 ? null : settings.offside === 1, passAssist: ASSIST_IDS[settings.assist],
     format: FORMAT_IDS[settings.format], formations: [F.formations[settings.formation], F.formations[seed % F.formations.length]],
   }, G.spectate ? null : 0, [V.kind, V.surface, settings.weather === 1]);
 }
@@ -251,6 +260,7 @@ function toPause() {
   const items = [
     { label: 'RESUME', action: resume },
     { label: 'AI DEBUG OVERLAY', options: ['OFF', 'ON'], value: hud.debug ? 1 : 0, onChange: v => hud.setDebug(!!v) },
+    { label: 'PASS ASSIST', options: ASSIST, value: settings.assist, onChange: v => { settings.assist = v; G.match?.passing.setMode(ASSIST_IDS[v]); } },
     { label: 'GRAPHICS', options: GFX, value: settings.gfx, onChange: v => { settings.gfx = v; applyGfx(); } },
     { label: 'TRICK-SHOT DRILL', action: toDrill },
     { label: 'QUIT TO MENU', action: () => { leaveDrill(); toTitle(); } },

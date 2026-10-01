@@ -6,9 +6,13 @@ import { predictPath, copyBall } from '../sim/ball.js';
 import { BALL } from '../config.js';
 import { PITCH } from '../sim/pitch.js';
 import { radialTexture } from './textures.js';
+import { DebugDraw } from './debugdraw.js';
 
 const REPLAY_SECS = 7;
-const RESTART_LABEL = { THROW_IN: 'THROW-IN', CORNER: 'CORNER', GOAL_KICK: 'GOAL KICK' };
+const RESTART_LABEL = { THROW_IN: 'THROW-IN', CORNER: 'CORNER', GOAL_KICK: 'GOAL KICK', FREE_KICK: 'FREE KICK' };
+// Pass feedback: a faint ring where your pass was meant to go, tinted by how well it came
+// off (from the pass's graded execution).
+const PASS_TINT = { excellent: 0xb8ffcf, good: 0xffffff, average: 0xffffff, poor: 0xffc266, 'very poor': 0xff6a5a };
 
 export class MatchView {
   constructor(ctx, match) {
@@ -75,6 +79,12 @@ export class MatchView {
     }
     this.ringIdx = 0;
 
+    // Pass feedback ring, and the gameplay debug drawing (with the AI debug overlay).
+    this.passRing = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.44, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+    this.passRing.rotation.x = -Math.PI / 2; this.passRing.visible = false; this.passFx = 9;
+    this.group.add(this.passRing);
+    this.debugDraw = new DebugDraw(this.group);
+
     this.frames = [];     // replay ring buffer
     this.recT = 0;
     this.goalMark = null;
@@ -105,7 +115,20 @@ export class MatchView {
     this.updateRings(dt);
     this.updateMarker(dt, human);
     this.updatePreview(human);
+    this.updatePassRing(dt);
+    this.debugDraw.update(dt, m, !!this.ctx.hud?.debug);
     this.record(dt);
+  }
+
+  updatePassRing(dt) {
+    const r = this.passRing;
+    if (!r.visible) return;
+    this.passFx += dt;
+    const u = this.passFx / 0.9;
+    if (u >= 1) { r.visible = false; return; }
+    r.material.opacity = 0.55 * (1 - u);
+    const s = 1 + 0.35 * u;
+    r.scale.set(s, s, s);
   }
 
   updateRings(dt) {
@@ -206,6 +229,11 @@ export class MatchView {
           if (e.speed > 22) rig.shake(0.05, 0.15);
           const col = p ? m.teams[p.team].def.kit.trim : '#ffd400';
           this.ball.setTrailColor(col);
+          if (e.pass && e.pass.human) {
+            this.passFx = 0; this.passRing.visible = true;
+            this.passRing.position.set(e.pass.x, 0.03, e.pass.z);
+            this.passRing.material.color.setHex(PASS_TINT[e.pass.tier] ?? 0xffffff);
+          }
           break;
         }
         case 'touch': this.athletes.get(e.pid)?.touch(e.power); audio.touch(e.power); break;
@@ -223,7 +251,8 @@ export class MatchView {
         case 'board': audio.fence(e.speed, true); break;
         case 'restart': {
           const T = m.teams[e.team], mine = m.opts.humanTeam === e.team && e.kind !== 'GOAL_KICK';
-          hud.notify(RESTART_LABEL[e.kind], 'restart', { color: T.def.kit.shirt, sub: mine ? 'AIM · PASS SHORT · LOB LONG' : T.def.name });
+          if (e.reason === 'offside') hud.notify('OFFSIDE', 'restart', { color: '#FFD400', sub: `FREE KICK · ${T.def.name}` });
+          else hud.notify(RESTART_LABEL[e.kind], 'restart', { color: T.def.kit.shirt, sub: mine ? 'AIM · PASS SHORT · LOB LONG' : T.def.name });
           break;
         }
         case 'restartSet': rig.cut(e.x, e.z); break;
@@ -293,6 +322,8 @@ export class MatchView {
     this.ball.blob.position.set(bb[0], 0.012, bb[2]);
     this.ring.visible = this.arrow.visible = this.chev.visible = false;
     this.previewDots.count = 0;
+    this.passRing.visible = false;
+    this.debugDraw.root.visible = false;
     const ballState = { x: bb[0], y: bb[1], z: bb[2], vx: bb[7], vy: bb[8], vz: bb[9], owner: bb[10] ? {} : null, wy: 0 };
     this.ball.update(0, ballState, this.ctx.rig.cam);
     this.ball.mesh.position.set(bb[0], bb[1], bb[2]);

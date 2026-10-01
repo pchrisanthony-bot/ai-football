@@ -1,6 +1,6 @@
 // Human controller: maps input onto the same Match API the AI uses.
 // Context-sensitive like FIFA: J passes with the ball, switches player without it.
-import { KICK, SWITCH } from '../config.js';
+import { KICK, SWITCH, footballGameplayConfig as GP } from '../config.js';
 import { maxSpeed } from '../sim/players.js';
 import { clampToField } from '../sim/pitch.js';
 import { clamp, rotateTowards } from '../util/math.js';
@@ -63,6 +63,7 @@ export class HumanController {
 
     if (r) { if (p === r.taker && r.state === 'READY') this.restartInput(dt, st, hasStick); return; }
     if (m.phase !== 'play') return;
+    this.receiveAssist(p, hasStick, sprint);
     if (inp.pressed('gamebreaker')) m.activateGB(this.team);   // G / L3·R3 / the GB button
     const canUseBall = mine || (!b.owner && m.ballReachableSoon(p, 1.6));
 
@@ -116,6 +117,19 @@ export class HumanController {
     }
   }
 
+  // Receiving: with the stick neutral, the man a pass is meant for goes to meet it (his
+  // touch stays a neutral one — or a cushion with Street Ball Control held). Any stick input
+  // is his own run and his own touch.
+  receiveAssist(p, hasStick, sprint) {
+    const m = this.m, b = m.ball;
+    p.autoReceive = false;
+    if (!GP.passing.receiveAssist || hasStick || b.owner || b.passTo !== p) return;
+    const ic = m.ai.intercept(p, m.nearestOpponent(p) > 3 ? 1.3 : 2.2, true);
+    const dx = ic.x - p.x, dz = ic.z - p.z, d = Math.hypot(dx, dz);
+    if (d > 0.3) { p.move.x = dx / d; p.move.z = dz / d; p.move.speed = Math.min(maxSpeed(p, sprint || d > 4), 0.8 + d * 2.6); }
+    p.autoReceive = true;
+  }
+
   // Taking a set piece: aim with the stick, hold for power, release to play it.
   //   PASS = short (a throw / a pass) · THROUGH, LOB or SHOOT = long (a long throw, a
   //   cross, a long ball). Toward a team-mate in the stick's direction, else into space.
@@ -127,7 +141,7 @@ export class HumanController {
     if (!inp.released(this.charge.kind)) return;
     const long = this.charge.kind !== 'pass', power = clamp(this.charge.t / KICK.chargeTime, 0.05, 1);
     this.charge = null;
-    const to = m.pickReceiver(p, st.x, st.z, long ? 'lob' : 'pass');
+    const to = m.passing.receiverFor(p, st.x, st.z, long);
     const ang = hasStick ? Math.atan2(st.z, st.x) : p.facing;
     const dist = long ? 16 + 22 * power : 7 + 8 * power;
     const target = to ? { x: to.x, z: to.z } : clampToField(p.x + Math.cos(ang) * dist, p.z + Math.sin(ang) * dist, 1);
@@ -151,11 +165,12 @@ export class HumanController {
     } else if (kind === 'through' && gesture === 'up') {
       m.requestPass(p, st.x, st.z, 'lob', null, false, { lead: true });   // lofted through ball
     } else if (kind === 'pass' && side) {
-      m.requestPass(p, st.x, st.z, 'pass', 1, flair);                      // driven ground pass
+      m.requestPass(p, st.x, st.z, 'pass', 0.75, flair, { driven: true }); // driven ground pass
     } else {
       // On touch the pass winds up a little longer so a second tap can dink it.
       const opts = kind === 'pass' && this.in.touch?.enabled ? { contact: 0.21 } : {};
-      m.requestPass(p, st.x, st.z, kind, kind === 'pass' ? power : null, flair, opts);
+      // The charge weights every pass: how far into space, and (less so, with assist) how hard.
+      m.requestPass(p, st.x, st.z, kind, power, flair, opts);
     }
   }
 
@@ -201,7 +216,7 @@ export class HumanController {
   switchScore(q) {
     const m = this.m, b = m.ball, gx = m.ownGoalX(this.team);
     const goalSide = Math.abs(q.x - gx) < Math.abs(b.x - gx) ? SWITCH.goalSide : 0;
-    return m.ai.intercept(q).t - goalSide;
+    return m.ai.intercept(q, 2.2, true).t - goalSide;
   }
 
   autoSwitch() {

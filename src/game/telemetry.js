@@ -25,8 +25,41 @@ export function makeTelemetry(getMatch, rig) {
       ai: m.ai.ranges ? m.ai.ranges() : null,
       phase: m.phase,
       restart: m.phase === 'restart' && m.restart ? `${m.restart.type} ${m.restart.state}` : null,
+      ...gameplay(m),
     };
   };
+}
+
+const deg = r => Math.round(r * 180 / Math.PI * 10) / 10;
+const r2 = v => Math.round(v * 100) / 100;
+
+// The last pass, the defending side's best chance to cut it out, and offside.
+function gameplay(m) {
+  const b = m.ball, c = m.passing.ctx, IS = m.intercepts, OS = m.offside;
+  const live = m.passing.inFlight();
+  const pass = c ? {
+    passer: c.passer.name, target: c.receiver ? c.receiver.name : 'space', type: c.type, mode: c.mode, live: !!live,
+    power: c.power != null ? r2(c.power) : null, quality: r2(c.quality), tier: c.tier,
+    angErr: deg(c.angErr), paceErr: Math.round(c.paceErr * 100), pace: r2(c.pace), correction: r2(c.correction), read: r2(c.read),
+    intended: [r2(c.intended.x), r2(c.intended.z)], receiverOffside: c.receiverOffside,
+  } : null;
+  let cut = null;
+  if (live) {
+    const t = 1 - live.passer.team, best = IS.bestCut(t), P = IS.perceived(t), X = IS.exactPath();
+    const at = (path, s) => { const q = path && path.pts[Math.min(path.pts.length - 1, Math.round(s * 30))]; return q ? [r2(q.x), r2(q.z)] : null; };
+    if (best) cut = { defender: best.p.name, at: [r2(best.p.x), r2(best.p.z)], point: [r2(best.ic.x), r2(best.ic.z)], eta: r2(best.ic.eta), ballEta: r2(best.ic.ballT), feasible: best.ic.feasible, reacted: IS.reacted(best.p), ballIn05: at(X, 0.5), readIn05: at(P, 0.5) };
+  }
+  let offside = null;
+  if (OS.enabled) {
+    const t = b.owner ? b.owner.team : live ? live.passer.team : null;
+    const L = t != null ? OS.line(t) : null;
+    offside = {
+      line: L ? r2(Math.max(L.u, b.x * L.dir, 0) * L.dir) : null, secondLast: L && L.secondLast ? L.secondLast.name : null,
+      snapshot: OS.snap ? { line: r2(OS.snap.line), flagged: [...OS.snap.flagged].map(id => m.byId.get(id).name), receiverOffside: OS.snap.receiverOffside } : null,
+      lastCall: OS.last ? `${OS.last.name} — ${OS.last.how}` : null,
+    };
+  }
+  return { pass, cut, offside, ballV: [r2(b.vx), r2(b.vy), r2(b.vz)] };
 }
 
 // Compact text block for the debug overlay.
@@ -39,6 +72,9 @@ export function telemetryText(t) {
     t.firstTouch ? `first touch ${t.firstTouch.name}: ${t.firstTouch.inV} → ${t.firstTouch.outV} m/s · q ${t.firstTouch.quality} · ${t.firstTouch.turn}°` : 'first touch —',
     `phase ${t.phase}${t.restart ? ' · restart ' + t.restart : ''}` + (t.camera ? ` · camera ${t.camera.dist} m` : ''),
     t.ai ? `AI ranges: ${Object.entries(t.ai).map(([k, v]) => `${k} ${v}`).join(' · ')}` : '',
+    t.pass ? `pass ${t.pass.passer} → ${t.pass.target} · ${t.pass.type} (${t.pass.mode}) · power ${t.pass.power ?? '—'} · q ${t.pass.quality} ${t.pass.tier} · err ${t.pass.angErr}° / ${t.pass.paceErr}% · ${t.pass.pace} m/s · assist ${t.pass.correction}${t.pass.receiverOffside ? ' · OFFSIDE' : ''}${t.pass.live ? ' · in flight' : ''}` : '',
+    t.cut ? `cut-out: ${t.cut.defender} at (${t.cut.at}) → (${t.cut.point}) · ETA ${t.cut.eta} s vs ball ${t.cut.ballEta} s · ${t.cut.feasible ? 'CAN' : 'cannot'} · ${t.cut.reacted ? 'reacted' : 'not yet reacted'} · ball +0.5 s (${t.cut.ballIn05}) read (${t.cut.readIn05})` : '',
+    t.offside ? `offside line x ${t.offside.line ?? '—'} (2nd-last ${t.offside.secondLast ?? '—'})${t.offside.snapshot ? ` · frozen at ${t.offside.snapshot.line}: ${t.offside.snapshot.flagged.join(', ') || 'nobody'} offside` : ''}${t.offside.lastCall ? ` · last call ${t.offside.lastCall}` : ''}` : '',
   ];
   return rows.filter(Boolean).join('\n');
 }
