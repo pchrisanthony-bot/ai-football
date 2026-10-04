@@ -9,7 +9,7 @@ import { radialTexture } from './textures.js';
 import { DebugDraw } from './debugdraw.js';
 
 const REPLAY_SECS = 7;
-const RESTART_LABEL = { THROW_IN: 'THROW-IN', CORNER: 'CORNER', GOAL_KICK: 'GOAL KICK', FREE_KICK: 'FREE KICK' };
+const RESTART_LABEL = { THROW_IN: 'THROW-IN', CORNER: 'CORNER', GOAL_KICK: 'GOAL KICK', FREE_KICK: 'FREE KICK', PENALTY: 'PENALTY' };
 // Pass feedback: a faint ring where your pass was meant to go, tinted by how well it came
 // off (from the pass's graded execution).
 const PASS_TINT = { excellent: 0xb8ffcf, good: 0xffffff, average: 0xffffff, poor: 0xffc266, 'very poor': 0xff6a5a };
@@ -251,11 +251,22 @@ export class MatchView {
         case 'board': audio.fence(e.speed, true); break;
         case 'restart': {
           const T = m.teams[e.team], mine = m.opts.humanTeam === e.team && e.kind !== 'GOAL_KICK';
+          const shot = e.kind === 'PENALTY' || (e.kind === 'FREE_KICK' && e.reason === 'foul');
           if (e.reason === 'offside') hud.notify('OFFSIDE', 'restart', { color: '#FFD400', sub: `FREE KICK · ${T.def.name}` });
-          else hud.notify(RESTART_LABEL[e.kind], 'restart', { color: T.def.kit.shirt, sub: mine ? 'AIM · PASS SHORT · LOB LONG' : T.def.name });
+          else hud.notify(RESTART_LABEL[e.kind], 'restart', { color: T.def.kit.shirt, sub: mine ? (shot ? 'AIM · SHOOT · OR PASS / LOB' : 'AIM · PASS SHORT · LOB LONG') : T.def.name });
           break;
         }
         case 'restartSet': rig.cut(e.x, e.z); break;
+        case 'foul': {
+          const q = m.players.find(x => x.id === e.pid);
+          audio.tackle(true);
+          if (e.card) {
+            const red = e.card !== 'yellow';
+            hud.notify(e.card === 'second yellow' ? 'SECOND YELLOW' : red ? 'RED CARD' : 'YELLOW CARD', 'alert', { color: red ? '#FF3B3B' : '#FFD400', sub: q ? q.name.toUpperCase() : '' });
+          } else if (e.kind !== 'handling') hud.notify('FOUL', 'save', { color: '#ffffff', sub: q ? q.name.toUpperCase() : '' });
+          break;
+        }
+        case 'sentOff': { const q = m.players.find(x => x.id === e.pid); hud.notify('SENT OFF', 'alert', { color: '#FF3B3B', sub: q ? q.name.toUpperCase() : '' }); break; }
         case 'goal': {
           audio.goal();
           venue.react?.('goal', m.teams[e.team].def.kit.shirt);

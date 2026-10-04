@@ -36,31 +36,31 @@ export const FORMATS = {
     label: '5v5 · STREET CAGE', teamSize: 5, pitch: 'cage5',
     formations: ['1-2-1', '2-1-1', '1-1-2'],
     camera: CAGE_CAM,
-    rules: { outOfPlay: false, marking: 'man', offsideEnabled: false },   // walled cage: the ball never leaves play; futsal man-marking; no offside (street rules)
+    rules: { outOfPlay: false, marking: 'man', offsideEnabled: false, foulsEnabled: false },   // walled cage: the ball never leaves play; futsal man-marking; no offside (street rules)
   },
   '7v7': {
     label: '7v7', teamSize: 7, pitch: 'open7',
     formations: ['2-3-1', '3-2-1', '2-2-2'],
     camera: { ...OPEN_CAM, base: 22, dist: [18, 30], roi: 16 },
-    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true },
+    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true, foulsEnabled: true },
   },
   '9v9': {
     label: '9v9', teamSize: 9, pitch: 'open9',
     formations: ['3-3-2', '3-2-3', '4-3-1'],
     camera: { ...OPEN_CAM, base: 24, dist: [19, 34], roi: 19 },
-    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true },
+    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true, foulsEnabled: true },
   },
   '11v11': {
     label: '11v11', teamSize: 11, pitch: 'full11',
     formations: ['4-3-3', '4-2-3-1', '4-4-2', '3-5-2'],
     camera: { ...OPEN_CAM, base: 26, dist: [20, 38], roi: 22 },
-    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true },
+    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true, foulsEnabled: true },
   },
 };
 export const FORMAT_IDS = Object.keys(FORMATS);
 
 // opts: { format, formations: [home, away] (ids), pitch (id or spec override),
-//         offside: true | false (overrides the format's rule; null/undefined = the format's) }
+//         offside, fouls: true | false (override the format's rule; null/undefined = the format's) }
 export function createMatchConfig(opts = {}) {
   const id = opts.format || '5v5';
   const f = FORMATS[id];
@@ -78,5 +78,6 @@ export function createMatchConfig(opts = {}) {
   });
   const rules = { ...f.rules };
   if (opts.offside === true || opts.offside === false) rules.offsideEnabled = opts.offside;
+  if (opts.fouls === true || opts.fouls === false) rules.foulsEnabled = opts.fouls;
   return { format: id, label: f.label, teamSize: f.teamSize, pitch: { ...pitchSpec, id: pitchId }, formations, rules, camera: f.camera };
 }

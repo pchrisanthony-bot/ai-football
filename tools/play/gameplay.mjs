@@ -76,6 +76,46 @@ const SCENARIOS = {
     return { who, flight: t1, outcome: { owner: await H.eval(() => __G.match.ball.owner?.name ?? null), cut: t2.cut } };
   },
 
+  // The referee: our man slides through the back of their carrier (a foul, a card, the
+  // free kick); a foul on the edge of their area (the wall); a foul in it (the penalty).
+  async referee(H) {
+    await H.start({ FORMAT: 3 });
+    await H.step(80);
+    // their carrier running away from our man, who chases and slides (SHOOT without the ball)
+    await H.eval(() => {
+      const m = __G.match, p = m.human;
+      m.phase = 'play'; m.restart = null;
+      const o = m.players.find(q => q.team === 1 && q.line === 'MID');
+      for (const q of m.players) if (q !== p && q !== o && q.line !== 'GK') { q.frozen = true; q.x = -30; }
+      Object.assign(o, { x: -5, z: 2, facing: Math.PI, heading: Math.PI, speed: 5, vx: -5, vz: 0, frozen: true });
+      Object.assign(p, { x: -1.6, z: 2, facing: Math.PI, heading: Math.PI, speed: 7, vx: -7, vz: 0 });
+      m.loseBall(); Object.assign(m.ball, { x: o.x - 0.45, z: 2, y: 0.11, vx: 0, vy: 0, vz: 0 }); m.gainPossession(o, true);
+      __G.mview.ctx.hud.setDebug(true);
+    });
+    await H.down('KeyA', 'ShiftLeft'); await H.step(3); await H.tap('KeyK', 3); await H.up('KeyA', 'ShiftLeft');
+    let foul = null;
+    for (let i = 0; i < 30 && !foul; i++) { await H.step(3); foul = await H.eval(() => __G.match.referee.last); }
+    await H.step(4);
+    await H.shot('referee-1-foul');
+    for (let i = 0; i < 40; i++) { await H.step(6); if (await H.eval(() => __G.match.restart?.state === 'READY')) break; }
+    await H.shot('referee-2-free-kick');
+    const fk = await H.eval(() => { const r = __G.match.restart; return r && { type: r.type, direct: r.direct, team: r.team, taker: r.taker.name }; });
+    // a foul by them just outside their area → our direct free kick with their wall
+    await H.eval(() => { const m = __G.match; m.restart = null; m.phase = 'play'; for (const q of m.players) { q.frozen = false; if (q.sentOff) continue; q.active = true; } m.referee.callFoul(m.players.find(q => q.team === 1 && q.line === 'DEF'), m.human, 32, -7, { behind: false, slide: false, ballFirst: false }); });
+    for (let i = 0; i < 40; i++) { await H.step(6); if (await H.eval(() => __G.match.restart?.state === 'READY')) break; }
+    await H.shot('referee-3-wall');
+    const wall = await H.eval(() => __G.match.restart?.wall);
+    // a foul in their area → a penalty
+    await H.eval(() => { const m = __G.match; m.restart = null; m.phase = 'play'; m.referee.callFoul(m.players.find(q => q.team === 1 && q.line === 'DEF'), m.human, 46, 3, { behind: false, slide: false, ballFirst: false }); });
+    for (let i = 0; i < 40; i++) { await H.step(6); if (await H.eval(() => __G.match.restart?.state === 'READY')) break; }
+    await H.shot('referee-4-penalty');
+    // take it: aim left, SHOOT
+    await H.down('KeyW'); await H.hold(['KeyK'], 30); await H.up('KeyW');
+    await H.step(50);
+    await H.shot('referee-5-penalty-taken');
+    return { foul, fk, wall, after: await H.eval(() => ({ phase: __G.match.phase, score: __G.match.teams.map(t => t.score).join('-') })) };
+  },
+
   // The setup menu has OFFSIDE and PASS ASSIST; the pause menu changes the assist mid-match.
   async menus(H) {
     await H.eval(() => { __G.menu.items.find(i => /PLAY MATCH/.test(i.label)).action(); });

@@ -197,3 +197,42 @@ Run `npm test`. Every suite passes, including the new `offside` (12 checks) and 
   - `tests/diag-shots2.mjs`: shot outcomes
   - `tests/diag-cost.mjs`: sim CPU cost
 - **Browser:** `tools/play/gameplay.mjs`. Frame-stepped: the offside flow with the overlay, a pass near a defender, and the setup menu.
+
+## The referee (`src/sim/rules/referee.js`)
+
+Tuned in `footballGameplayConfig.referee`. Fouls are off in the 5v5 cage, which has no refs, and on in the open formats; the FOULS & CARDS setting overrides that. The keeper's protection and the kick-off rule apply everywhere.
+
+### Keeper protection
+
+- **Before:**
+  - A slide that clipped a keeper holding the ball tripped him and knocked it out of his hands.
+  - AI pressers crowded him.
+- **Now:**
+  - `canChallenge` refuses any tackle or slide on him (human or AI), and slides can't clip him.
+  - Opponents in his area switch to RETREAT, out of it by `gkClear`; nobody presses him.
+  - After `gkHoldMax` (6 s) holding it, he concedes an indirect free kick, taken from the edge of the goal area.
+
+### Fouls from the geometry of the challenge
+
+- **Standing tackle.** The foot sweeps `footReach` along the tackler's facing. A ray-vs-circle test gives the first contact with the ball (`ballHit`) and with the man (`bodyHit`).
+- **Slide.** The first thing the slide meets is recorded on the action.
+- **The call.** The man first is a foul. So is a challenge from directly behind that makes contact: the carrier's forward vector · the unit vector from the tackler to him > `behindDot`.
+- **Severity.** (speed − 3)/5, plus `sevBehind`, `sevSlide`, and `sevDogso` for denying an obvious goal-scoring chance. Above `yellow` it's a yellow; above `red` it's a red.
+  - A DOGSO is a red, except in the area after a genuine attempt at the ball, where it's a yellow (the penalty punishes it).
+  - Two yellows make a red, and a red sends him off (at most two per side).
+- **The restart.** A direct free kick where it happened, or a PENALTY if it was in the fouling side's area.
+- **The AI** only commits when the ball is the first thing in its foot's path and the carrier isn't facing away. Sometimes it's reckless anyway (`aiReckless`, more often at lower levels).
+
+### Set pieces
+
+- **Direct free kick in range.** A wall of 2, 3 or 4 by team size, on the ball–goal line at the laws' distance (the centre-circle radius), shifted toward the near post and held exactly, with no personal-space steering. The AI taker usually shoots over it, often with curl.
+- **Penalty.** The ball goes on the spot. Everyone but the taker and the keeper stands outside the area and the arc; the keeper stays on his line. The AI shoots for a corner; a human aims with the stick and presses SHOOT. Play goes on after it, so rebounds count.
+- **Kick-off.** After the whistle, and until the taker has played the ball, everyone is held in his own half and the other side stays out of the centre circle.
+
+### Results
+
+- **AI v AI** (`tests/diag-referee.mjs`, PRO, 5 minutes):
+  - 11v11 has 0.5–0.9 fouls a match (the real game is about 1.2 per 5 minutes), cards are rare, and no stoppage lasts more than 2.7 s.
+  - 7v7 has about 3 fouls, with occasional penalties and free-kick shots.
+- **Browser:** a human slide through the back of a carrier gave a yellow card and a free kick. A foul at the edge of the area set a 4-man wall at 9.15 m, and the penalty set-up and kick worked (it was parried).
+- **Tests:** `tests/referee.test.mjs`, 12 checks.

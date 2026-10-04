@@ -79,7 +79,7 @@ const hud = new HUD(ui);
 const screens = document.createElement('div');
 ui.appendChild(screens);
 
-const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0, offside: 0, assist: 0 };
+const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0, offside: 0, fouls: 0, assist: 0 };
 // Rules and pass assist (footballGameplayConfig): offside AUTO follows the format (off in
 // the cage, on in open play); pass assist is the player's, and can change mid-match.
 const OFFSIDE = [{ label: 'AUTO' }, { label: 'ON' }, { label: 'OFF' }];
@@ -195,6 +195,7 @@ function toSetup(spectate = false) {
     { label: 'MATCH', options: MODES, value: settings.mode, onChange: v => settings.mode = v },
     { label: 'AI LEVEL', options: DIFFS, value: settings.diff, onChange: v => settings.diff = v },
     { label: 'OFFSIDE', options: OFFSIDE, value: settings.offside, onChange: v => settings.offside = v },
+    { label: 'FOULS & CARDS', options: OFFSIDE, value: settings.fouls, onChange: v => settings.fouls = v },
     { label: 'PASS ASSIST', options: ASSIST, value: settings.assist, onChange: v => settings.assist = v },
     venueItem,
     { label: 'WEATHER', options: WEATHER, value: settings.weather, onChange: v => settings.weather = v },
@@ -215,7 +216,7 @@ function newMatch() {
   return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
     difficulty: DIFFS[settings.diff].v, seed,
-    offside: settings.offside === 0 ? null : settings.offside === 1, passAssist: ASSIST_IDS[settings.assist],
+    offside: settings.offside === 0 ? null : settings.offside === 1, fouls: settings.fouls === 0 ? null : settings.fouls === 1, passAssist: ASSIST_IDS[settings.assist],
     format: FORMAT_IDS[settings.format], formations: [F.formations[settings.formation], F.formations[seed % F.formations.length]],
   }, G.spectate ? null : 0, [V.kind, V.surface, settings.weather === 1]);
 }

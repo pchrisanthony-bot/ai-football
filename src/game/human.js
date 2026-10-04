@@ -140,7 +140,13 @@ export class HumanController {
     this.charge.t += dt;
     if (!inp.released(this.charge.kind)) return;
     const long = this.charge.kind !== 'pass', power = clamp(this.charge.t / KICK.chargeTime, 0.05, 1);
+    const shoot = this.charge.kind === 'shoot';
     this.charge = null;
+    // A penalty or a direct free kick: SHOOT goes for goal (aimed with the stick).
+    if (shoot && (r.type === 'PENALTY' || (r.type === 'FREE_KICK' && r.direct))) {
+      m.takeRestart(p, 'shot', { aim: m.humanAim(p, st.x, st.z, power, this.in.down('flair'), false) });
+      return;
+    }
     const to = m.passing.receiverFor(p, st.x, st.z, long);
     const ang = hasStick ? Math.atan2(st.z, st.x) : p.facing;
     const dist = long ? 16 + 22 * power : 7 + 8 * power;

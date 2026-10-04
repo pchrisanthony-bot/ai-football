@@ -59,7 +59,9 @@ function gameplay(m) {
       lastCall: OS.last ? `${OS.last.name} — ${OS.last.how}` : null,
     };
   }
-  return { pass, cut, offside, ballV: [r2(b.vx), r2(b.vy), r2(b.vz)] };
+  const R = m.referee, k = R.keeperHolding();
+  const referee = { fouls: R.fouls, keeper: k ? `${k.name} holding ${R.holdT.toFixed(1)} s` : null, kickoffHold: R.kickoffLive, last: R.last };
+  return { pass, cut, offside, referee, ballV: [r2(b.vx), r2(b.vy), r2(b.vz)] };
 }
 
 // Compact text block for the debug overlay.
@@ -74,6 +76,7 @@ export function telemetryText(t) {
     t.ai ? `AI ranges: ${Object.entries(t.ai).map(([k, v]) => `${k} ${v}`).join(' · ')}` : '',
     t.pass ? `pass ${t.pass.passer} → ${t.pass.target} · ${t.pass.type} (${t.pass.mode}) · power ${t.pass.power ?? '—'} · q ${t.pass.quality} ${t.pass.tier} · err ${t.pass.angErr}° / ${t.pass.paceErr}% · ${t.pass.pace} m/s · assist ${t.pass.correction}${t.pass.receiverOffside ? ' · OFFSIDE' : ''}${t.pass.live ? ' · in flight' : ''}` : '',
     t.cut ? `cut-out: ${t.cut.defender} at (${t.cut.at}) → (${t.cut.point}) · ETA ${t.cut.eta} s vs ball ${t.cut.ballEta} s · ${t.cut.feasible ? 'CAN' : 'cannot'} · ${t.cut.reacted ? 'reacted' : 'not yet reacted'} · ball +0.5 s (${t.cut.ballIn05}) read (${t.cut.readIn05})` : '',
+    t.referee && (t.referee.keeper || t.referee.last || t.referee.kickoffHold) ? `referee: ${t.referee.fouls ? 'fouls on' : 'no fouls'}${t.referee.keeper ? ' · ' + t.referee.keeper + ' (protected)' : ''}${t.referee.kickoffHold ? ' · kick-off: own halves' : ''}${t.referee.last ? ` · last foul ${t.referee.last.fouler} on ${t.referee.last.victim}: ${t.referee.last.slide ? 'slide' : 'tackle'}${t.referee.last.behind ? ' from behind' : ''}${t.referee.last.ballFirst ? ' (ball first)' : ' (man first)'} at ${t.referee.last.speed} m/s → ${t.referee.last.card || 'no card'}${t.referee.last.penalty ? ' · PENALTY' : ''}` : ''}` : '',
     t.offside ? `offside line x ${t.offside.line ?? '—'} (2nd-last ${t.offside.secondLast ?? '—'})${t.offside.snapshot ? ` · frozen at ${t.offside.snapshot.line}: ${t.offside.snapshot.flagged.join(', ') || 'nobody'} offside` : ''}${t.offside.lastCall ? ` · last call ${t.offside.lastCall}` : ''}` : '',
   ];
   return rows.filter(Boolean).join('\n');

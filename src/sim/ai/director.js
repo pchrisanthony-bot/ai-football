@@ -122,7 +122,8 @@ export class AIDirector {
       const f = T.focus;
       let best = null, bt = Infinity;
       for (const p of outfield) { if (p === T.cutter) continue; const tt = reachTime(p, f.x, f.z, 0); if (tt < bt) { bt = tt; best = p; } }
-      T.presser = best;
+      // Nobody presses a keeper holding the ball.
+      T.presser = o && o.line === 'GK' && b.inHands ? null : best;
       // Human asked for teammate pressure (or the human is already pressing and wants help).
       T.presser2 = null;
       if (T.forcePress) {
@@ -167,6 +168,15 @@ export class AIDirector {
     }
   }
 
+  // The nearest spot just outside the keeper's area (goal at gx), clear by gkClear.
+  outOfArea(p, gx) {
+    const ka = PITCH.keeperArea, s = Math.sign(gx), c = GP.referee.gkClear + 0.6;
+    if (ka.kind === 'arc') { const dx = p.x - gx, dz = p.z, d = Math.hypot(dx, dz) || 1, r = ka.radius + c; return { x: gx + dx / d * r, z: dz / d * r }; }
+    const outX = gx - s * (ka.depth + c), outZ = Math.sign(p.z || 1) * (ka.width / 2 + c);
+    // out the front, or out the side, whichever is nearer
+    return Math.abs(p.x - outX) <= Math.abs(p.z - outZ) ? { x: outX, z: p.z } : { x: p.x, z: outZ };
+  }
+
   // Keep a spot (world x) behind team t's offside line while it has the ball.
   onside(t, x) {
     const lim = this.team[t].onside, dir = this.m.teams[t].dir;
@@ -203,6 +213,14 @@ export class AIDirector {
     if (b.passTo === p) { this.setState(p, 'RECEIVE', true); return; }
     // Nobody re-thinks before he has picked up the last strike: until then he carries on.
     if (!m.intercepts.reacted(p)) { ai.label = ai.state; return; }
+    // Their keeper has it in his hands: out of his area, nobody goes near him.
+    const gk = m.referee.keeperHolding();
+    if (gk && gk.team !== p.team) {
+      const gx = m.ownGoalX(gk.team);
+      if (inKeeperArea(p.x, p.z, gx, GP.referee.gkClear)) { this.setState(p, 'RETREAT', true); ai.spot = this.outOfArea(p, gx); ai.label = 'RETREAT'; return; }
+      if (ai.state === 'PRESS' || ai.state === 'RETREAT') { this.setState(p, 'COVER', true); ai.label = 'COVER'; return; }
+    }
+    m.referee.aiTemper(p);
 
     if (T.phase === 'DEFEND' && !b.owner) {
       // An opponent's pass in flight: one man goes to cut it out where he can beat the
@@ -455,13 +473,15 @@ export class AIDirector {
         // Tackle when the ball is exposed or on a timer scaled by difficulty.
         const bd = Math.hypot(b.x - p.x, b.z - p.z);
         const exposed = Math.hypot(b.x - o.x, b.z - o.z) > 0.62;
-        if ((bd < 1.25 || (dist < 1.3 && ai.pressT > 1.2)) && !p.action && p.stun <= 0) {
+        // (Never on a keeper's ball, and not through the back of a man unless he's reckless.)
+        const may = b.owner === o && m.referee.aiWillChallenge(p, o);
+        if (may && (bd < 1.25 || (dist < 1.3 && ai.pressT > 1.2)) && !p.action && p.stun <= 0) {
           const rate = (exposed ? 3.5 : 0.8) * (0.4 + 0.9 * d) * (1 + Math.max(0, ai.pressT - 1));
           if (this.m.rand() < rate * dt) m.requestTackle(p);
         }
         // Last-ditch slide when the carrier is getting away toward goal.
         const away = Math.hypot(o.x - g.x, o.z) < Math.hypot(p.x - g.x, p.z);
-        if (away && bd < 2.4 && bd > 1.2 && o.speed > 4 && !p.action && this.m.rand() < 0.9 * d * dt * p.attrs.tackle) {
+        if (may && away && bd < 2.4 && bd > 1.2 && o.speed > 4 && !p.action && this.m.rand() < 0.9 * d * dt * p.attrs.tackle) {
           p.facing = p.heading = Math.atan2(b.z + b.vz * 0.2 - p.z, b.x + b.vx * 0.2 - p.x);
           m.requestSlide(p);
         }
@@ -484,6 +504,12 @@ export class AIDirector {
         }
         this.goTo(p, tx, tz, maxSpeed(p, p.sprinting || Math.hypot(tx - p.x, tz - p.z) > 4), 0.3);
         if (p.speed < 1) p.faceTarget = { x: b.x, z: b.z };
+        break;
+      }
+      case 'RETREAT': {
+        const s = ai.spot || T.anchors.get(p.id);
+        this.goTo(p, s.x, s.z, maxSpeed(p, false), 0.3);
+        p.faceTarget = { x: b.x, z: b.z };
         break;
       }
       case 'COVER': {
@@ -520,9 +546,11 @@ export class AIDirector {
 
   go(p, dx, dz, speed) { p.move.x = dx; p.move.z = dz; p.move.speed = speed; }
   stop(p) { p.move.x = 0; p.move.z = 0; p.move.speed = 0; }
-  goTo(p, x, z, speed, tol = 0.3) {
+  // spaced: steer off team-mates in his personal space (not on a set-piece spot: a wall
+  // stands shoulder to shoulder).
+  goTo(p, x, z, speed, tol = 0.3, spaced = true) {
     const dx = x - p.x, dz = z - p.z, d = Math.hypot(dx, dz);
-    const sep = this.separation(p);
+    const sep = spaced ? this.separation(p) : { x: 0, z: 0, m: 0 };
     if (d < tol) {
       // At his spot, but crowding a team-mate: ease out of the way.
       if (sep.m > 0.25) this.go(p, sep.x / sep.m, sep.z / sep.m, 1.2 * sep.m); else this.stop(p);
@@ -702,6 +730,8 @@ export class AIDirector {
     if (r.type === 'THROW_IN') this.throwInSpots(r, spots);
     else if (r.type === 'CORNER') this.cornerSpots(r, spots);
     else if (r.type === 'GOAL_KICK') this.goalKickSpots(r, spots);
+    else if (r.type === 'PENALTY') this.penaltySpots(r, spots);
+    else if (r.type === 'FREE_KICK' && r.direct) this.wallSpots(r, spots);
     for (const p of m.players) {
       if (!p.active || p === r.taker) continue;
       const s = spots.get(p.id) || this.team[p.team].anchors.get(p.id);
@@ -709,6 +739,7 @@ export class AIDirector {
       p.vx = p.vz = p.speed = 0; p.action = null; p.stun = 0;
       p.heading = p.facing = Math.atan2(m.ball.z - p.z, m.ball.x - p.x);
       p.ai.state = p.line === 'GK' ? 'POSITION' : 'IDLE'; p.ai.pending = null; p.ai.diveFor = null;
+      p.ai.label = r.wall && spots.has(p.id) && p.team !== r.team && r.type === 'FREE_KICK' ? 'WALL' : 'SET PIECE';
     }
   }
 
@@ -777,6 +808,50 @@ export class AIDirector {
     else cbs.slice(0, 2).forEach((q, i) => spots.set(q.id, corners[i]));
   }
 
+  // A penalty: everyone but the taker and the keeper on the edge of the area, out of the arc,
+  // a team-mate and an opponent side by side for the rebound.
+  penaltySpots(r, spots) {
+    const m = this.m, gx = m.oppGoalX(r.team), s = Math.sign(gx), ka = PITCH.keeperArea;
+    const depth = ka.kind === 'rect' ? ka.depth : ka.radius;
+    const edge = gx - s * (depth + 0.9), spotX = r.spot.x;
+    const arcZ = Math.sqrt(Math.max(0, PITCH.centreR ** 2 - (edge - spotX) ** 2)) + 0.8;
+    // (the taker's keeper stays in his own goal: his anchor)
+    const others = m.players.filter(q => q.active && q !== r.taker && q.line !== 'GK')
+      .sort((a, c) => (a.team - c.team) || Math.abs(a.x - gx) - Math.abs(c.x - gx));
+    const atk = others.filter(q => q.team === r.team), def = others.filter(q => q.team !== r.team);
+    const order = [];
+    for (let i = 0; i < Math.max(atk.length, def.length); i++) { if (def[i]) order.push(def[i]); if (atk[i]) order.push(atk[i]); }
+    order.forEach((q, i) => {
+      const k = Math.floor(i / 2), side = i % 4 < 2 ? 1 : -1, row = Math.floor(k / 2);
+      const z = side * Math.min(PITCH.halfW - 1.5, arcZ + (k % 2) * 1.6 + row * 3.2);
+      spots.set(q.id, { x: edge - s * row * 2.5, z });
+    });
+    const gk = m.keeper(1 - r.team);
+    if (gk) spots.set(gk.id, { x: gx - s * 0.15, z: 0 });
+  }
+
+  // A direct free kick within shooting range: a wall on the line from the ball to the goal,
+  // the laws' distance from the ball (the centre-circle radius), shifted a touch toward the
+  // near post; the men nearest it make it.
+  wallSpots(r, spots) {
+    const m = this.m, W = GP.referee.wall, sp = r.spot;
+    const gx = m.oppGoalX(r.team);
+    const d = Math.hypot(gx - sp.x, sp.z);
+    if (d > this.R.shot * W.range) return;
+    const ux = (gx - sp.x) / d, uz = -sp.z / d, px = -uz, pz = ux;
+    const size = m.cfg.teamSize, n = Math.min(W.men[size <= 7 ? 0 : size <= 9 ? 1 : 2], Math.max(1, Math.round(d / 6)));
+    const R = PITCH.centreR + 0.1;
+    // shifted half a man toward the near post (the ball's side of the goal)
+    const toNear = (Math.sign(sp.z) || 1) * (Math.sign(pz) || 1);
+    const cx = sp.x + ux * R, cz = sp.z + uz * R;
+    const pool = m.teamPlayers(1 - r.team).filter(q => q.line !== 'GK').sort((a, c) => Math.hypot(a.x - cx, a.z - cz) - Math.hypot(c.x - cx, c.z - cz));
+    for (let i = 0; i < n && pool[i]; i++) {
+      const off = (i - (n - 1) / 2 + toNear * 0.5) * GP.referee.wallGap;
+      spots.set(pool[i].id, { x: cx + px * off, z: cz + pz * off });
+    }
+    r.wall = { n, x: cx, z: cz };
+  }
+
   restartThink(p) {
     const r = this.m.restart;
     if (r && r.state === 'READY' && p === r.taker && r.readyT >= r.aiAt) this.decideRestart(p);
@@ -793,7 +868,7 @@ export class AIDirector {
       return;
     }
     const s = this.restartSpots.get(p.id) || this.team[p.team].anchors.get(p.id);
-    if (s) this.goTo(p, s.x, s.z, maxSpeed(p, false) * 0.7, 0.35); else this.stop(p);
+    if (s) this.goTo(p, s.x, s.z, maxSpeed(p, false) * 0.7, 0.35, !this.restartSpots.has(p.id)); else this.stop(p);
   }
 
   // The taker's choice (also used when a human taker runs out of time).
@@ -822,8 +897,21 @@ export class AIDirector {
       const short = m.mates(p).filter(q => q.line !== 'GK').sort((a, c) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(c.x - p.x, c.z - p.z))[0];
       return m.takeRestart(p, 'pass', { receiver: short });
     }
+    if (r.type === 'PENALTY') {
+      // Low into a corner, or high; the keeper reads it after the strike like any shot.
+      const tz = (m.rand() < 0.5 ? -1 : 1) * (PITCH.goalHalfW - 0.4 - m.rand() * 0.8);
+      return m.takeRestart(p, 'shot', { aim: { mode: 'assist', tz, ty: 0.3 + m.rand() * 1.3, power: 0.8 + 0.12 * this.diff } });
+    }
+    if (r.type === 'FREE_KICK' && r.direct) {
+      // In range: over the wall and curled toward the far post — most of the time.
+      const gx = m.oppGoalX(p.team), d = Math.hypot(gx - p.x, p.z);
+      if (d < this.R.shot * 1.25 && Math.abs(p.z) < d * 0.9 && m.rand() < 0.7) {
+        const tz = -(Math.sign(p.z) || 1) * (PITCH.goalHalfW - 0.5);
+        return m.takeRestart(p, 'shot', { aim: { mode: 'assist', tz, ty: 1.5 + m.rand() * 0.6, power: 0.86 + 0.08 * this.diff, finesse: m.rand() < 0.6 } });
+      }
+    }
     if (r.type === 'FREE_KICK') {
-      // Indirect: it has to be played to someone. A safe one if there is one, else long.
+      // Play it to someone: a safe one if there is one, else long.
       const opts = evalPasses(m, p).filter(o => (o.kind === 'pass' || o.kind === 'lob') && o.risk < 0.35);
       if (opts.length && opts[0].u > -0.4) {
         const o = opts[0];

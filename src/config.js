@@ -249,6 +249,25 @@ export const footballGameplayConfig = {
     lane: [0.12, 0.38],         // share of the way into the passing lane a marker shades [weak, elite]
     laneMax: 2.6,               // m
   },
+  // The referee (Laws 8, 12, 13, 14): fouls and cards, free kicks and penalties, the
+  // keeper's protection, the kick-off. Fouls are off in the street cage (no refs).
+  referee: {
+    footReach: 0.95,            // m a standing tackle's foot sweeps out along his facing
+    slideReach: 0.75,           // m ahead of a slider's hips his foot is
+    ballHit: 0.2,               // m: the sweep touches the ball this close to its centre
+    bodyHit: 0.3,               // m: …and the man this close to his centre
+    behindDot: 0.75,            // carrier's forward · (tackler → carrier) above this: from behind
+    behindIsFoul: true,         // a tackle from directly behind that makes contact is a foul
+    // Card severity: (speed − 3)/5 + behind + slide (+ denying an obvious goal-scoring chance)
+    sevBehind: 0.5, sevSlide: 0.3, sevDogso: 0.9,
+    yellow: 0.75, red: 1.6,
+    dogsoRange: 1.0,            // × the AI's shooting range: a clear run on goal from here
+    aiReckless: [0.25, 0.04],   // chance an AI goes through the back of a man anyway [weak, elite]
+    gkHoldMax: 6,               // s a keeper may hold it (then an indirect free kick)
+    gkClear: 1.0,               // m opponents keep beyond the area while the keeper has it in his hands
+    wall: { range: 1.35, men: [2, 3, 4] },   // × shooting range: a wall; men by team size (≤7, 9, 11)
+    wallGap: 0.62,              // m between men in the wall
+  },
 };
 // AI difficulty (0.35 amateur · 0.6 pro · 0.88 legend) → 0..1 along [weak, elite].
 export const gameplaySkill = diff => Math.max(0, Math.min(1, (diff - 0.2) / 0.7));
