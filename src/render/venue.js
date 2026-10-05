@@ -4,7 +4,6 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PITCH } from '../sim/pitch.js';
 import { courtTextures, chainLink, netTexture, graffitiBoard, concreteTexture, radialTexture, bannerTexture, sprayTag, turfTextures, adBoard } from './textures.js';
 import { buildStands, towerHead } from './stadium.js';
-import { buildOpenPitch } from './markings.js';
 
 // ------------------------------------------------------------------ ripple FX (fence + nets)
 // Up to 8 live impacts; vertices are pushed along the surface normal by a decaying ring wave.
@@ -51,9 +50,8 @@ class Ripples {
 // turf, stands and a crowd — the FTS 15 look). Builds into `scene` (a Group) and
 // hands back its fog separately so venues can be swapped.
 export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
-  const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH, runoff } = PITCH;
-  const open = PITCH.boundary === 'open';      // an open pitch is always in a stadium
-  const arena = kind === 'arena' || open;
+  const { halfL, halfW, wallH, boardH, goalHalfW, goalH, goalD, roofH } = PITCH;
+  const arena = kind === 'arena';
   const venue = { kind, fence: new Ripples(), nets: new Ripples(), lights: [], animated: [] };
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
 
@@ -103,10 +101,10 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     // The far-right mast has a dying lamp: it buzzes and stutters now and then.
     const dying = !arena && sx === 1 && sz === -1;
     const lm = dying ? lampMat.clone() : lampMat;
-    const out = open ? [runoff + 16, runoff + 20] : arena ? [7.5, 12] : [3.2, 3.2];
-    const bx = sx * (halfL + out[0]), bz = sz * (halfW + out[1]), top = open ? 26 + PITCH.length * 0.14 : arena ? 21 : 12;
-    const aim = open ? new THREE.Vector3(sx * halfL * 0.2, 0, sz * halfW * 0.15) : new THREE.Vector3(sx * 3, 0, sz * 1.5);
-    const reach = Math.hypot(bx - aim.x, top, bz - aim.z), k = open ? reach / 35.3 : 1;   // 35.3 m: the stadium cage's throw
+    const out = arena ? [7.5, 12] : [3.2, 3.2];
+    const bx = sx * (halfL + out[0]), bz = sz * (halfW + out[1]), top = arena ? 21 : 12;
+    const aim = new THREE.Vector3(sx * 3, 0, sz * 1.5);
+    const reach = Math.hypot(bx - aim.x, top, bz - aim.z), k = 1;
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(arena ? 0.3 : 0.14, arena ? 0.55 : 0.22, top, 12), mastMat);
     mast.position.set(bx, top / 2, bz); mast.castShadow = false;
     scene.add(mast);
@@ -123,7 +121,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
       }
     }
     head.position.set(bx, top, bz);
-    head.lookAt(open ? aim.x : sx * 4, 0, open ? aim.z : sz * 2);
+    head.lookAt(sx * 4, 0, sz * 2);
     scene.add(head);
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: flare, color: 0xffe9c4, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6 }));
     glow.scale.setScalar((arena ? 8 : 5) * Math.sqrt(k)); glow.position.set(bx - sx * 0.3, top, bz - sz * 0.3);
@@ -134,7 +132,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
     spot.target.position.copy(aim);
     spot.castShadow = true;
     spot.shadow.mapSize.set(1024, 1024);
-    spot.shadow.camera.near = 4; spot.shadow.camera.far = open ? reach + 90 : arena ? 70 : 50;
+    spot.shadow.camera.near = 4; spot.shadow.camera.far = arena ? 70 : 50;
     spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.03;
     spot.shadow.radius = 3;
     scene.add(spot, spot.target);
@@ -164,7 +162,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
   // ---------------------------------------------------------------- rooftop floor & parapet
   const conc = concreteTexture();
   conc.repeat.set(24, 18); conc.anisotropy = maxAniso;
-  const floorL = open ? PITCH.length + 2 * runoff + 90 : arena ? 110 : 64, floorW = open ? PITCH.width + 2 * runoff + 90 : arena ? 90 : 48;
+  const floorL = arena ? 110 : 64, floorW = arena ? 90 : 48;
   const roof = new THREE.Mesh(new THREE.PlaneGeometry(floorL, floorW), new THREE.MeshStandardMaterial({ map: conc, roughness: 0.95, metalness: 0, color: arena ? 0x8a8f99 : 0xffffff }));
   roof.rotation.x = -Math.PI / 2; roof.position.y = -0.02; roof.receiveShadow = true;
   scene.add(roof);
@@ -178,11 +176,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
   }
 
   // ---------------------------------------------------------------- playing surface
-  if (open) {
-    const pitch = buildOpenPitch(maxAniso);
-    scene.add(pitch.group);
-    venue.setWet = pitch.setWet;
-  } else {
+  {
     const { map, roughness } = arena ? turfTextures() : courtTextures();
     map.anisotropy = maxAniso;
     const court = new THREE.Mesh(
@@ -248,17 +242,7 @@ export function buildVenue(scene, renderer, { kind = 'rooftop' } = {}) {
   };
   const M = new THREE.Matrix4();
 
-  if (open) {
-    // Advertising boards round the run-off, where the ball physics stops the ball. Long
-    // runs are split into boards of ~20 m (each with its own artwork); the camera side
-    // is see-through.
-    const ex = halfL + runoff, ez = halfW + runoff;
-    const run = (len, place) => { const n = Math.ceil(len / 20), seg = len / n; for (let i = 0; i < n; i++) place(-len / 2 + seg * (i + 0.5), seg, i); };
-    for (const s of [-1, 1]) {
-      run(ex * 2, (c, seg, i) => addBoard(seg, c, s * (ez + 0.04), s > 0 ? Math.PI : 0, (s > 0 ? 3 : 4) + i * 7, s > 0));
-      run(ez * 2, (c, seg, i) => addBoard(seg, s * (ex + 0.04), c, s > 0 ? -Math.PI / 2 : Math.PI / 2, 10 + s * 2 + i * 5, false));
-    }
-  } else {
+  {
     // -------------------------------------------------------------- cage
     const chain = chainLink();
     chain.anisotropy = maxAniso;
@@ -549,8 +533,8 @@ function buildCity(scene, venue) {
   const M = new THREE.Matrix4(), q = new THREE.Quaternion();
   let s = 12345;
   const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
-  // The skyline starts beyond the stadium (further out round a big pitch).
-  const R0 = Math.max(70, Math.hypot(PITCH.halfL + PITCH.runoff, PITCH.halfW + PITCH.runoff) + 50);
+  // The skyline starts beyond the stadium.
+  const R0 = Math.max(70, Math.hypot(PITCH.halfL, PITCH.halfW) + 50);
   let i = 0;
   while (i < N) {
     const ang = r() * Math.PI * 2;

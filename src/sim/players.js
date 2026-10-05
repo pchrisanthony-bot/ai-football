@@ -38,9 +38,9 @@ function lookFor(team, k0, seed = 0) {
   return { skin: SKINS[k], hair: HAIRS[k2], hairStyle: STYLES[k3], build: 0.94 + ((team * 13 + k0 * 7) % 5) * 0.03 };
 }
 
-// Keep a player inside the playing area: the cage, or the pitch plus its run-off.
+// Keep a player inside the cage.
 export function clampToArea(p) {
-  const lx = PITCH.halfL + PITCH.runoff - 0.35, lz = PITCH.halfW + PITCH.runoff - 0.35;
+  const lx = PITCH.halfL - 0.35, lz = PITCH.halfW - 0.35;
   if (p.x > lx) { p.x = lx; if (p.vx > 0) p.vx = 0; }
   if (p.x < -lx) { p.x = -lx; if (p.vx < 0) p.vx = 0; }
   if (p.z > lz) { p.z = lz; if (p.vz > 0) p.vz = 0; }

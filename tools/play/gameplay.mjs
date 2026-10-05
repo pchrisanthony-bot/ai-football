@@ -19,7 +19,7 @@ const setup = (H, o) => H.eval(o => {
   for (const q of m.players) {
     if (q === p || q === mate || q === def || q === gk) continue;
     q.frozen = true; q.speed = 0; q.vx = q.vz = 0;
-    q.x = -m.oppGoalX(0) * 0.6 - (q.team === p.team ? 4 : 0); q.z = ((i++ % 9) - 4) * 3.5;   // upfield, out of play's way
+    q.x = -m.oppGoalX(0) * 0.7 - (q.team === p.team ? 2 : 0); q.z = ((i++ % 5) - 2) * 3;     // upfield, out of play's way
   }
   for (const [q, x, z, f] of [[p, o.x, o.z, 0], [mate, o.rx, o.rz, Math.PI], [def, o.dx, o.dz, Math.PI], [gk, m.oppGoalX(0) - 1, 0, Math.PI]]) {
     Object.assign(q, { x, z, vx: 0, vz: 0, speed: 0, heading: f, facing: f, action: null, stun: 0, noTouch: 0, frozen: q !== p && !o.live });
@@ -38,9 +38,9 @@ const SCENARIOS = {
   // A team-mate a yard beyond the last defender: the live line, then the line frozen at the
   // pass with him flagged, then the flag when he plays it — a free kick to the defenders.
   async offside(H) {
-    await H.start({ FORMAT: 3 });
+    await H.start({ OFFSIDE: 1 });
     await H.step(80);
-    const who = await setup(H, { x: 2, z: 0, rx: 21, rz: 0.5, dx: 19, dz: 6 });
+    const who = await setup(H, { x: -2, z: 0, rx: 10.5, rz: 0.4, dx: 9, dz: -3 });
     await H.step(2);
     await H.shot('offside-1-before');
     const before = await tele(H);
@@ -62,7 +62,7 @@ const SCENARIOS = {
   // A pass with a defender near the lane: the lane, the ball's path and the defending
   // side's read of it, the cut-out point and ETAs — and the pass feedback ring.
   async lane(H) {
-    await H.start({ FORMAT: 0 });
+    await H.start({});
     await H.step(80);
     const who = await setup(H, { x: -6, z: 0, rx: 6, rz: 0, dx: 1, dz: 2.2, live: true });
     await H.step(2);
@@ -79,7 +79,7 @@ const SCENARIOS = {
   // The referee: our man slides through the back of their carrier (a foul, a card, the
   // free kick); a foul on the edge of their area (the wall); a foul in it (the penalty).
   async referee(H) {
-    await H.start({ FORMAT: 3 });
+    await H.start({ 'FOULS & CARDS': 1 });
     await H.step(80);
     // their carrier running away from our man, who chases and slides (SHOOT without the ball)
     await H.eval(() => {
@@ -101,12 +101,12 @@ const SCENARIOS = {
     await H.shot('referee-2-free-kick');
     const fk = await H.eval(() => { const r = __G.match.restart; return r && { type: r.type, direct: r.direct, team: r.team, taker: r.taker.name }; });
     // a foul by them just outside their area → our direct free kick with their wall
-    await H.eval(() => { const m = __G.match; m.restart = null; m.phase = 'play'; for (const q of m.players) { q.frozen = false; if (q.sentOff) continue; q.active = true; } m.referee.callFoul(m.players.find(q => q.team === 1 && q.line === 'DEF'), m.human, 32, -7, { behind: false, slide: false, ballFirst: false }); });
+    await H.eval(() => { const m = __G.match; m.restart = null; m.phase = 'play'; for (const q of m.players) { q.frozen = false; if (q.sentOff) continue; q.active = true; } m.referee.callFoul(m.players.find(q => q.team === 1 && q.line === 'DEF'), m.human, 8, -3, { behind: false, slide: false, ballFirst: false }); });
     for (let i = 0; i < 40; i++) { await H.step(6); if (await H.eval(() => __G.match.restart?.state === 'READY')) break; }
     await H.shot('referee-3-wall');
     const wall = await H.eval(() => __G.match.restart?.wall);
     // a foul in their area → a penalty
-    await H.eval(() => { const m = __G.match; m.restart = null; m.phase = 'play'; m.referee.callFoul(m.players.find(q => q.team === 1 && q.line === 'DEF'), m.human, 46, 3, { behind: false, slide: false, ballFirst: false }); });
+    await H.eval(() => { const m = __G.match; m.restart = null; m.phase = 'play'; m.referee.callFoul(m.players.find(q => q.team === 1 && q.line === 'DEF'), m.human, 13.5, 1, { behind: false, slide: false, ballFirst: false }); });
     for (let i = 0; i < 40; i++) { await H.step(6); if (await H.eval(() => __G.match.restart?.state === 'READY')) break; }
     await H.shot('referee-4-penalty');
     // take it: aim left, SHOOT

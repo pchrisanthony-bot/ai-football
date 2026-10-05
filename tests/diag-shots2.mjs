@@ -1,10 +1,10 @@
 // Shot outcomes AI v AI: on target, saved, scored, and from how far / what preceded them.
 import { Match } from '../src/sim/match.js';
 import { SIM_DT } from '../src/config.js';
-const format = process.argv[2] || '11v11', secs = +(process.argv[3] || 300), seeds = +(process.argv[4] || 8);
+const format = '5v5', secs = +(process.argv[3] || 300), seeds = +(process.argv[4] || 8);
 const t = { shots: 0, onT: 0, saves: 0, goals: 0, dist: 0, headers: 0, hGoals: 0, from: {} };
 for (let seed = 1; seed <= seeds; seed++) {
-  const m = new Match({ format, humanTeam: null, seconds: secs, seed });
+  const m = new Match({ humanTeam: null, seconds: secs, seed });
   let lastKind = null;
   while (m.phase !== 'fulltime') {
     m.step(SIM_DT);

@@ -1,5 +1,7 @@
 # Offside, fair passing and interceptions — report
 
+> **Scope change (5 October 2026).** STREETCAGE is a 5v5 street-cage game only. The 7v7, 9v9 and 11v11 open pitches, with their formations, roles, cameras, venues, out-of-play rules and restarts (throw-ins, corners, goal kicks), have been removed; see commit history for the removal. Offside and the referee (fouls, cards, free kicks, penalties) remain as optional cage rules: off by default (street rules), switched on with the OFFSIDE and FOULS & CARDS settings. Their tests now run in the cage. The open-pitch measurements below are kept as a record.
+
 All of it is tuned in one place, `footballGameplayConfig` in `src/config.js`, with sections for `offside`, `passing`, `interception`, `possession` and `defending`. Difficulty maps onto `[weak, elite]` pairs through `gameplaySkill()` and `byDiff()`. It changes how fast and how well the AI reads the ball. It never changes how far a player can reach.
 
 ## Architecture

@@ -8,9 +8,8 @@ import { ledRibbon } from './textures.js';
 
 export function buildStands(scene, venue) {
   const { halfL, halfW } = PITCH;
-  const open = PITCH.boundary === 'open';
-  const rows = open ? 12 : 9, rise = 0.48, depth = 0.86;
-  const gap = open ? PITCH.runoff + 2.5 : 3.1;     // pitch edge → front of the stands
+  const rows = 9, rise = 0.48, depth = 0.86;
+  const gap = 3.1;                                 // cage edge → front of the stands
   const concrete = new THREE.MeshStandardMaterial({ color: 0x2c313d, roughness: 0.9 });
   const seatA = new THREE.MeshStandardMaterial({ color: 0x1d3f8a, roughness: 0.7 });
   const seatB = new THREE.MeshStandardMaterial({ color: 0x8a1d2a, roughness: 0.7 });

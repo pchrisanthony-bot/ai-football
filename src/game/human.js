@@ -151,8 +151,7 @@ export class HumanController {
     const ang = hasStick ? Math.atan2(st.z, st.x) : p.facing;
     const dist = long ? 16 + 22 * power : 7 + 8 * power;
     const target = to ? { x: to.x, z: to.z } : clampToField(p.x + Math.cos(ang) * dist, p.z + Math.sin(ang) * dist, 1);
-    if (r.type === 'THROW_IN') m.takeRestart(p, 'throwin', to ? { receiver: to } : { target });
-    else if (long) m.takeRestart(p, 'lob', { target, receiver: to });
+    if (long) m.takeRestart(p, 'lob', { target, receiver: to });
     else m.takeRestart(p, 'pass', to ? { receiver: to, power } : { target, power });
   }
 

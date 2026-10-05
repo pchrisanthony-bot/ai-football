@@ -1,10 +1,12 @@
-// Formats, formations, roles and pitches: every format/formation builds a valid match
-// from data, kick-offs follow the laws, sides are team-relative, bad configs are
-// refused, and player switching picks the man who wins the ball soonest.
+// The 5v5 cage from data: every formation builds a valid match, kick-offs follow the laws,
+// sides are team-relative, bad configs are refused, the AI plays with the tuned cage
+// distances, the ball never leaves the cage, and player switching picks the man who wins
+// the ball soonest.
 import { Match, SIM_DT, FakeInput } from './lib/sim.mjs';
 import { HumanController } from '../src/game/human.js';
 import { FORMATS, createMatchConfig } from '../src/sim/formats.js';
 import { buildPitch, PITCHES, PITCH } from '../src/sim/pitch.js';
+import { aiRanges } from '../src/sim/ai/ranges.js';
 
 export default function () {
   const out = [];
@@ -50,23 +52,24 @@ export default function () {
     check('5v5: the street five keep their places (left ala on the left)', five === want && silva.form.y < 0.5, five);
   }
 
-  // 3) Formations are team-relative: each side's left-back is on ITS left.
+  // 3) Formations are team-relative: each side's left ala is on ITS left.
   {
-    const m = new Match({ format: '11v11', formations: ['4-3-3', '4-3-3'], humanTeam: null });
-    const lb = t => m.players.find(p => p.team === t && p.role === 'LB');
+    const m = new Match({ formations: ['1-2-1', '1-2-1'], humanTeam: null });
+    const la = t => m.players.find(p => p.team === t && p.role === 'ALA' && p.form.y < 0.5);
     // Facing +x, left is −z; facing −x, left is +z.
-    check('formations are team-relative (both left-backs on their own left)', lb(0).z < 0 && lb(1).z > 0, `home LB z ${lb(0).z.toFixed(1)}, away LB z ${lb(1).z.toFixed(1)}`);
+    check('formations are team-relative (both left alas on their own left)', la(0).z < 0 && la(1).z > 0, `home z ${la(0).z.toFixed(1)}, away z ${la(1).z.toFixed(1)}`);
   }
 
   // 4) Bad data is refused with a clear error.
   {
     const errs = [];
     const tryIt = (what, fn) => { try { fn(); errs.push(`${what}: accepted`); } catch (e) { if (!/pitch|formation|format/i.test(e.message)) errs.push(`${what}: ${e.message}`); } };
-    tryIt('negative length', () => buildPitch({ ...PITCHES.full11, length: -5 }));
-    tryIt('goal wider than pitch', () => buildPitch({ ...PITCHES.open7, goal: { ...PITCHES.open7.goal, width: 40 } }));
-    tryIt('box past halfway', () => buildPitch({ ...PITCHES.open9, keeperArea: { kind: 'rect', depth: 40, width: 20 } }));
-    tryIt('7v7 formation in 11v11', () => createMatchConfig({ format: '11v11', formations: ['2-3-1', '4-4-2'] }));
-    tryIt('unknown format', () => createMatchConfig({ format: '6v6' }));
+    const C = PITCHES.cage5;
+    tryIt('negative length', () => buildPitch({ ...C, length: -5 }));
+    tryIt('goal wider than pitch', () => buildPitch({ ...C, goal: { ...C.goal, width: 40 } }));
+    tryIt('keeper area past halfway', () => buildPitch({ ...C, keeperArea: { radius: 20 } }));
+    tryIt('unknown formation', () => createMatchConfig({ formations: ['4-4-2', '1-2-1'] }));
+    tryIt('unknown format', () => createMatchConfig({ format: '11v11' }));
     check('invalid pitches / formations / formats are refused', !errs.length, errs.join('; ') || '5 refused');
   }
 
@@ -74,7 +77,7 @@ export default function () {
   //    switches to the team-mate who will get there first, not the man nearest it now.
   {
     const res = [];
-    for (const format of ['5v5', '11v11']) {
+    for (const format of ['5v5']) {
       const m = new Match({ format, humanTeam: 0, seconds: 9999, seed: 3 });
       m.phase = 'play';
       const outs = m.players.filter(p => p.team === 0 && p.line !== 'GK');
@@ -113,6 +116,22 @@ export default function () {
     let switches = 0, last = m.human;
     for (let f = 0; f < 180; f++) { inp.set([]); h.update(1 / 60); m.step(SIM_DT); m.step(SIM_DT); if (m.human !== last) { switches++; last = m.human; } }
     check('switching has hysteresis (no flicker between equal men)', switches <= 2, `${switches} switches in 3 s`);
+  }
+  // 7) The AI plays with the distances it was tuned with in the cage.
+  {
+    const R = aiRanges();
+    const want = { shot: 19, groundPass: 24, threat: 30, run: 7, keeperSet: 14, rush: 5, minXg: 0.07, saveMax: 0.95 };
+    const bad = Object.entries(want).filter(([k, v]) => Math.abs(R[k] - v) > 1e-9).map(([k, v]) => `${k} ${R[k]} ≠ ${v}`);
+    if (R.support.join() !== '2.5,4.5' || R.lane.join() !== '3.5,16' || R.keeperOut.join() !== '1.6,2.4' || R.space.join() !== '10,14') bad.push('radii');
+    check('the AI plays with the tuned cage distances', !bad.length, bad.join('; ') || 'identical');
+  }
+
+  // 8) The cage never goes out of play: no restarts but kick-offs in 90 s of AI football.
+  {
+    const m = new Match({ humanTeam: null, seconds: 90, seed: 2 });
+    const kinds = new Set();
+    for (let i = 0; i < 90 * 120 * 2 && m.phase !== 'fulltime'; i++) { m.step(SIM_DT); for (const e of m.drainEvents()) { if (e.type === 'restart') kinds.add(e.kind); if (e.type === 'goalDone') m.resumeAfterGoal(); } }
+    check('the cage never goes out of play', kinds.size === 0, kinds.size ? [...kinds].join(',') : 'none in 90 s');
   }
   return out;
 }

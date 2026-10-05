@@ -1,12 +1,11 @@
 // What costs render time, measured on a FROZEN frame: the same frame rendered 80 times
 // with a GPU sync (gl.finish) after each, per condition — no gameplay noise. Conditions
 // hide parts of the scene (light cones, crowd, athletes, …).
-//   node tools/play/perf-ab.mjs [--format=N] [--gfx=N] [--venue=N] [--frames=N]
+//   node tools/play/perf-ab.mjs [--gfx=N] [--venue=N] [--frames=N]
 import { harness } from './harness.mjs';
 const arg = (k, d) => { const a = process.argv.find(x => x.startsWith(`--${k}=`)); return a ? a.split('=')[1] : d; };
 const H = await harness({});
 const settings = { GRAPHICS: +arg('gfx', 1), VENUE: +arg('venue', 0) };
-if (arg('format', null) != null) settings.FORMAT = +arg('format');
 await H.start(settings, { spectate: true });
 await H.step(+arg('frames', 240));
 await H.eval(() => {

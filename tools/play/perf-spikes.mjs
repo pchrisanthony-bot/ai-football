@@ -1,11 +1,10 @@
 // Real-time spike hunt: for every frame over 25 ms, which profiled section grew (sim,
 // view, hud, render-submit…) — or none (GC, compositor, GPU stall).
-//   node tools/play/perf-spikes.mjs [--format=N] [--gfx=N] [--secs=15]
+//   node tools/play/perf-spikes.mjs [--gfx=N] [--secs=15]
 import { harness, sleep } from './harness.mjs';
 const arg = (k, d) => { const a = process.argv.find(x => x.startsWith(`--${k}=`)); return a ? a.split('=')[1] : d; };
 const H = await harness({ query: '?profile' });
 const settings = { GRAPHICS: +arg('gfx', 1), VENUE: +arg('venue', 0) };
-if (arg('format', null) != null) settings.FORMAT = +arg('format');
 await H.start(settings, { spectate: true });
 await H.resume();
 await sleep(3000);

@@ -7,10 +7,7 @@
 import { PITCHES, buildPitch } from './pitch.js';
 import { FORMATIONS } from './formations.js';
 
-// Broadcast camera framing per format (see CameraRig.broadcast). The cage values are the
-// tuned 5v5 framing. Open pitches follow the ball across the width from a gantry beyond
-// the near touch line, and zoom with the play around the ball (roi m), not the whole
-// pitch — so a bigger pitch doesn't simply mean a wider, emptier shot.
+// Broadcast camera framing (see CameraRig.broadcast): the tuned 5v5 cage framing.
 const CAGE_CAM = {
   lead: 0.35, humanBias: 0.25, omega: 3.2,       // focus: ball + its run, a little toward the human
   edge: 6, zFollow: 0.55, zRange: [-3 / 9, 2.5 / 9],   // keep the focus this far in (x m; z as × half-width)
@@ -21,40 +18,12 @@ const CAGE_CAM = {
   lookZ: 0.4, lookOff: 1.2, fov: 34,
   roi: Infinity,                                  // the cage: everyone is in the play
 };
-const OPEN_CAM = {
-  ...CAGE_CAM,
-  lead: 0.45, humanBias: 0.2, omega: 2.6,
-  edge: 9, zFollow: 0.85, zRange: [-0.8, 0.85],
-  spreadK: 0.16, goalZoom: 3, goalBand: [14, 10],
-  rise: 0.56, lift: 2,
-  gantry: 1, zCam: 0.25, back: 0.55, backOff: 2,
-  lookZ: 1, lookOff: 1.4, fov: 36,
-};
-
 export const FORMATS = {
   '5v5': {
     label: '5v5 · STREET CAGE', teamSize: 5, pitch: 'cage5',
     formations: ['1-2-1', '2-1-1', '1-1-2'],
     camera: CAGE_CAM,
-    rules: { outOfPlay: false, marking: 'man', offsideEnabled: false, foulsEnabled: false },   // walled cage: the ball never leaves play; futsal man-marking; no offside (street rules)
-  },
-  '7v7': {
-    label: '7v7', teamSize: 7, pitch: 'open7',
-    formations: ['2-3-1', '3-2-1', '2-2-2'],
-    camera: { ...OPEN_CAM, base: 22, dist: [18, 30], roi: 16 },
-    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true, foulsEnabled: true },
-  },
-  '9v9': {
-    label: '9v9', teamSize: 9, pitch: 'open9',
-    formations: ['3-3-2', '3-2-3', '4-3-1'],
-    camera: { ...OPEN_CAM, base: 24, dist: [19, 34], roi: 19 },
-    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true, foulsEnabled: true },
-  },
-  '11v11': {
-    label: '11v11', teamSize: 11, pitch: 'full11',
-    formations: ['4-3-3', '4-2-3-1', '4-4-2', '3-5-2'],
-    camera: { ...OPEN_CAM, base: 26, dist: [20, 38], roi: 22 },
-    rules: { outOfPlay: true, marking: 'zonal', offsideEnabled: true, foulsEnabled: true },
+    rules: { offsideEnabled: false, foulsEnabled: false },   // street rules: no offside, no refs (both can be switched on)
   },
 };
 export const FORMAT_IDS = Object.keys(FORMATS);

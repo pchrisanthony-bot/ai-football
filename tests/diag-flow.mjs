@@ -1,11 +1,11 @@
 // AI v AI match flow: goals, shots, passing (completed / intercepted / deflected), how
 // quickly a side that wins the ball back shoots (counter speed), offsides.
-//   node tests/diag-flow.mjs [format] [seconds] [seeds] [difficulty]
+//   node tests/diag-flow.mjs _ [seconds] [seeds] [difficulty] [--offside=on] [--fouls=on]
 import { Match } from '../src/sim/match.js';
 import { SIM_DT } from '../src/config.js';
 
 export function flow(format = '5v5', seconds = 180, seed = 1, difficulty = 0.6, extra = {}) {
-  const m = new Match({ format, humanTeam: null, seconds, seed, difficulty, ...extra });
+  const m = new Match({ humanTeam: null, seconds, seed, difficulty, ...extra });
   const s = { goals: 0, shots: 0, passes: 0, completed: 0, intercepted: 0, deflected: 0, mateOther: 0, offsides: 0, turnovers: 0, toShot: [], quickShots: 0, firstAct: [] };
   let open = null, turn = null, won = null, steps = 0;
   while (m.phase !== 'fulltime' && steps++ < seconds * 120 * 4) {
@@ -49,7 +49,7 @@ export function flow(format = '5v5', seconds = 180, seed = 1, difficulty = 0.6, 
 
 if (process.argv[1].endsWith('diag-flow.mjs')) {
   const format = process.argv[2] || '5v5', secs = +(process.argv[3] || 180), seeds = +(process.argv[4] || 4), diff = +(process.argv[5] || 0.6);
-  const extra = process.argv.includes('--offside=off') ? { offside: false } : process.argv.includes('--offside=on') ? { offside: true } : {};
+  const extra = { offside: process.argv.includes('--offside=on'), fouls: process.argv.includes('--fouls=on') };
   const tot = {};
   const all = [], acts = [];
   for (let seed = 1; seed <= seeds; seed++) {
@@ -61,5 +61,5 @@ if (process.argv[1].endsWith('diag-flow.mjs')) {
   const med = all.sort((a, b) => a - b)[Math.floor(all.length / 2)];
   acts.sort((a, b) => a - b);
   const actMed = acts[Math.floor(acts.length / 2)], actFast = acts.filter(x => x < 0.3).length / Math.max(1, acts.length);
-  console.log(`${format}${extra.offside === false ? ' (no offside)' : ''} diff ${diff} · ${seeds} × ${secs}s: goals ${per('goals')} · shots ${per('shots')} · passes ${per('passes')} · completed ${(100 * tot.completed / tot.passes).toFixed(0)}% · intercepted ${(100 * tot.intercepted / tot.passes).toFixed(0)}% · deflected ${(100 * tot.deflected / tot.passes).toFixed(0)}% · turnovers ${per('turnovers')} · turnover→shot median ${med?.toFixed(2)} s, <4 s: ${(100 * tot.quickShots / Math.max(1, tot.turnovers)).toFixed(0)}% of turnovers · offsides ${per('offsides')} · after winning it: first pass/shot median ${actMed?.toFixed(2)} s, within 0.3 s ${(100 * actFast).toFixed(0)}%`);
+  console.log(`${format}${extra.offside ? ' (offside on)' : ''}${extra.fouls ? ' (fouls on)' : ''} diff ${diff} · ${seeds} × ${secs}s: goals ${per('goals')} · shots ${per('shots')} · passes ${per('passes')} · completed ${(100 * tot.completed / tot.passes).toFixed(0)}% · intercepted ${(100 * tot.intercepted / tot.passes).toFixed(0)}% · deflected ${(100 * tot.deflected / tot.passes).toFixed(0)}% · turnovers ${per('turnovers')} · turnover→shot median ${med?.toFixed(2)} s, <4 s: ${(100 * tot.quickShots / Math.max(1, tot.turnovers)).toFixed(0)}% of turnovers · offsides ${per('offsides')} · after winning it: first pass/shot median ${actMed?.toFixed(2)} s, within 0.3 s ${(100 * actFast).toFixed(0)}%`);
 }

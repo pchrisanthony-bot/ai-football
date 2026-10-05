@@ -6,7 +6,7 @@ const format = process.argv[2] || '5v5', secs = +(process.argv[3] || 120), seeds
 const tally = {}, labels = {};
 let poss = 0, possN = 0, ev = {};
 for (let seed = 1; seed <= seeds; seed++) {
-  const m = new Match({ format, humanTeam: null, seconds: secs, seed });
+  const m = new Match({ humanTeam: null, seconds: secs, seed });
   const orig = m.ai.attackThink.bind(m.ai);
   m.ai.attackThink = p => { const before = p.ai.plan; orig(p); if (p.ai.plan !== before && p.ai.plan) tally[p.ai.plan.kind] = (tally[p.ai.plan.kind] || 0) + 1; labels[p.ai.label] = (labels[p.ai.label] || 0) + 1; };
   let owner = null, since = 0;

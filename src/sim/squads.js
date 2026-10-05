@@ -1,8 +1,7 @@
 // =====================================================================
-// Clubs and squads. Every club has 16 players; each one has an archetype and the
-// positions he can play, best first. buildLineup() fits a squad to any formation by
-// role fit (position preference, side, quality) — the same club fields its street
-// five in the cage and a full XI on a big pitch.
+// Clubs and their street fives: each player has an archetype and the cage positions he
+// can play, best first. buildLineup() fits the five to a formation by role fit
+// (position preference, side, quality).
 // =====================================================================
 import { ROLES } from './roles.js';
 import { formation } from './formations.js';
@@ -27,48 +26,32 @@ export const TEAMS = {
     id: 'cage', name: 'CAGE KINGS', short: 'CGK',
     kit: { shirt: '#1466FF', trim: '#FFD400', shorts: '#0B1F4D', socks: '#FFD400', gk: '#18C27A' },
     squad: [
-      P('Okafor', 1, 'Keeper', 'GK'), P('Brandt', 4, 'Enforcer', 'FIXO CB DM'), P('Silva', 7, 'Trickster', 'ALA LW AM LM', 'L'),
-      P('Diallo', 11, 'Speedster', 'ALA RW RM ST', 'R'), P('Reyes', 10, 'Finisher', 'PIVO ST CF'),
-      P('Haddad', 13, 'Keeper', 'GK', null, -0.06), P('Varga', 5, 'Enforcer', 'CB FIXO', null, -0.02), P('Quinn', 2, 'Speedster', 'RB RWB RM', null, -0.04),
-      P('Petrov', 3, 'Speedster', 'LB LWB LM', null, -0.04), P('Larsen', 6, 'Enforcer', 'DM CM CB', null, -0.03), P('Fofana', 8, 'Playmaker', 'CM DM AM', null, -0.02),
-      P('Moreno', 14, 'Playmaker', 'AM CM', null, -0.03), P('Takahashi', 17, 'Trickster', 'LW LM AM', null, -0.04), P('Abara', 19, 'Speedster', 'RW RM ST', null, -0.04),
-      P('Kowalczyk', 9, 'Finisher', 'ST CF PIVO', null, -0.03), P('Duarte', 21, 'Enforcer', 'CB RB', null, -0.05),
+      P('Okafor', 1, 'Keeper', 'GK'), P('Brandt', 4, 'Enforcer', 'FIXO'), P('Silva', 7, 'Trickster', 'ALA', 'L'),
+      P('Diallo', 11, 'Speedster', 'ALA', 'R'), P('Reyes', 10, 'Finisher', 'PIVO'),
     ],
   },
   rooftop: {
     id: 'rooftop', name: 'ROOFTOP FC', short: 'RFC',
     kit: { shirt: '#FF3B3B', trim: '#FFFFFF', shorts: '#1A1A1A', socks: '#FF3B3B', gk: '#FF9F1C' },
     squad: [
-      P('Kowal', 1, 'Keeper', 'GK'), P('Moreau', 5, 'Enforcer', 'FIXO CB'), P('Tanaka', 8, 'Playmaker', 'ALA CM AM LM', 'L'),
-      P('Mensah', 17, 'Speedster', 'ALA RW RM', 'R'), P('Vidal', 9, 'Finisher', 'PIVO ST CF'),
-      P('Brennan', 12, 'Keeper', 'GK', null, -0.05), P('Okoro', 4, 'Enforcer', 'CB DM FIXO', null, -0.02), P('Lindgren', 2, 'Speedster', 'RB RWB', null, -0.04),
-      P('Ferreira', 3, 'Playmaker', 'LB LWB LM', null, -0.05), P('Sato', 6, 'Enforcer', 'DM CB', null, -0.03), P('Hale', 10, 'Playmaker', 'AM CM', null, -0.02),
-      P('Ibarra', 14, 'Playmaker', 'CM DM', null, -0.04), P('Nkosi', 7, 'Speedster', 'RW RM', null, -0.03), P('Volkov', 11, 'Trickster', 'LW LM AM', null, -0.03),
-      P('Achebe', 19, 'Finisher', 'ST CF', null, -0.04), P('Dumont', 15, 'Enforcer', 'CB LB', null, -0.05),
+      P('Kowal', 1, 'Keeper', 'GK'), P('Moreau', 5, 'Enforcer', 'FIXO'), P('Tanaka', 8, 'Playmaker', 'ALA', 'L'),
+      P('Mensah', 17, 'Speedster', 'ALA', 'R'), P('Vidal', 9, 'Finisher', 'PIVO'),
     ],
   },
   neon: {
     id: 'neon', name: 'NEON STREETS', short: 'NEO',
     kit: { shirt: '#B84DFF', trim: '#39FF88', shorts: '#140A26', socks: '#39FF88', gk: '#FFE14D' },
     squad: [
-      P('Adeyemi', 1, 'Keeper', 'GK'), P('Kaya', 3, 'Enforcer', 'FIXO CB LB'), P('Lopes', 10, 'Trickster', 'ALA AM LW', 'L'),
-      P('Novak', 14, 'Playmaker', 'ALA CM RM', 'R'), P('Hughes', 9, 'Finisher', 'PIVO ST CF'),
-      P('Santos', 22, 'Keeper', 'GK', null, -0.06), P('Bauer', 4, 'Enforcer', 'CB FIXO', null, -0.03), P('Mwangi', 2, 'Speedster', 'RB RWB RM', null, -0.04),
-      P('Ricci', 5, 'Enforcer', 'CB DM', null, -0.04), P('Yilmaz', 6, 'Playmaker', 'DM CM', null, -0.03), P('Castro', 8, 'Playmaker', 'CM AM', null, -0.03),
-      P('Olsen', 15, 'Speedster', 'LB LWB LM', null, -0.05), P('Diaz', 7, 'Trickster', 'RW RM AM', null, -0.03), P('Kim', 11, 'Speedster', 'LW LM ST', null, -0.03),
-      P('Grant', 19, 'Finisher', 'ST CF', null, -0.04), P('Ndiaye', 16, 'Enforcer', 'DM CB', null, -0.05),
+      P('Adeyemi', 1, 'Keeper', 'GK'), P('Kaya', 3, 'Enforcer', 'FIXO'), P('Lopes', 10, 'Trickster', 'ALA', 'L'),
+      P('Novak', 14, 'Playmaker', 'ALA', 'R'), P('Hughes', 9, 'Finisher', 'PIVO'),
     ],
   },
   harbour: {
     id: 'harbour', name: 'HARBOUR SIDE', short: 'HBS',
     kit: { shirt: '#F2F2F2', trim: '#0FB5AE', shorts: '#0FB5AE', socks: '#F2F2F2', gk: '#E83F6F' },
     squad: [
-      P('Lindqvist', 1, 'Keeper', 'GK'), P('Osei', 6, 'Enforcer', 'FIXO DM CB'), P('Costa', 8, 'Playmaker', 'ALA CM LM', 'L'),
-      P('Park', 7, 'Speedster', 'ALA RW RM', 'R'), P('Ivanov', 11, 'Trickster', 'PIVO ST AM'),
-      P('Murphy', 13, 'Keeper', 'GK', null, -0.06), P('Jansen', 4, 'Enforcer', 'CB FIXO', null, -0.02), P('Afolabi', 5, 'Enforcer', 'CB RB', null, -0.04),
-      P('Moretti', 3, 'Speedster', 'LB LWB', null, -0.04), P('Roux', 2, 'Speedster', 'RB RWB', null, -0.05), P('Hussein', 16, 'Playmaker', 'DM CM', null, -0.03),
-      P('Aguilar', 10, 'Playmaker', 'AM CM', null, -0.02), P('Berg', 14, 'Playmaker', 'CM LM', null, -0.04), P('Tembo', 17, 'Speedster', 'LW LM', null, -0.03),
-      P('Ortiz', 9, 'Finisher', 'ST CF', null, -0.02), P('Novik', 19, 'Finisher', 'ST RW', null, -0.05),
+      P('Lindqvist', 1, 'Keeper', 'GK'), P('Osei', 6, 'Enforcer', 'FIXO'), P('Costa', 8, 'Playmaker', 'ALA', 'L'),
+      P('Park', 7, 'Speedster', 'ALA', 'R'), P('Ivanov', 11, 'Trickster', 'PIVO'),
     ],
   },
 };

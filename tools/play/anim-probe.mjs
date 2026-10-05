@@ -1,13 +1,13 @@
 // Animation quality probe (frame-accurate, real renderer): for a controlled player doing
 // each movement, measure foot skating (a planted foot sliding over the ground), feet
 // floating above / sinking into the pitch, body-yaw snaps and pose pops.
-//   node tools/play/anim-probe.mjs [label] [--format=N]
+//   node tools/play/anim-probe.mjs [label]
 import fs from 'fs';
 import { harness } from './harness.mjs';
 const arg = (k, d) => { const a = process.argv.find(x => x.startsWith(`--${k}=`)); return a ? a.split('=')[1] : d; };
 const label = process.argv.slice(2).find(a => !a.startsWith('--')) || 'anim';
 const H = await harness({});
-await H.start(arg('format', null) != null ? { FORMAT: +arg('format') } : {});
+await H.start({});
 await H.step(90);
 
 // Put the human alone in space (others frozen far away), optionally with the ball.

@@ -1,5 +1,7 @@
 # STREETCAGE: from a 5v5 cage to 11v11 — final report
 
+> **Scope change (5 October 2026).** STREETCAGE is a 5v5 street-cage game only. The 7v7, 9v9 and 11v11 open pitches, with their formations, roles, cameras, venues, out-of-play rules and restarts (throw-ins, corners, goal kicks), have been removed; see commit history for the removal. The numbers below were measured while those formats existed and are kept as a record.
+
 Branch `scale-11v11`, Phases 1–12. Every number below was measured in the real game (headless sim and real Chrome on an Intel Iris Xe laptop). The raw data is in `docs/metrics/*.json` and the tests are under `tests/`.
 
 ---

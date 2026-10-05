@@ -15,7 +15,7 @@ export const NOTICES = {
   frame:   { at: 'top', size: 'm', dur: 1.3 },     // OFF THE POST / BAR
   skill:   { at: 'top', size: 'm', dur: 1.2 },     // PANNA!
   alert:   { at: 'top', size: 'm', dur: 1.8 },     // GAMEBREAKER READY
-  restart: { at: 'top', size: 'l', dur: 1.6 },     // KICK OFF / CORNER / THROW-IN / GOAL KICK
+  restart: { at: 'top', size: 'l', dur: 1.6 },     // KICK OFF / FREE KICK / PENALTY
   power:   { at: 'top', size: 'l', dur: 2.2 },     // GAMEBREAKER (slow motion, play is live)
   info:    { at: 'top', size: 's', dur: 3.2 },     // instructions (drill)
 };

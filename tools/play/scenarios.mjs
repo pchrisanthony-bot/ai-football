@@ -1,11 +1,10 @@
 // Browser gameplay scenarios with real keyboard input, frame-accurate (nothing moves
 // while a screenshot is taken). Screenshots + telemetry go to tools/play/out/.
-//   node tools/play/scenarios.mjs <name|all> [--format=N]
+//   node tools/play/scenarios.mjs <name|all>
 import { harness } from './harness.mjs';
 
 const arg = (k, d) => { const a = process.argv.find(x => x.startsWith(`--${k}=`)); return a ? a.split('=')[1] : d; };
 const want = process.argv[2] || 'all';
-const format = arg('format', null);
 
 // Put the human somewhere clean, others frozen out of the way; optionally with the ball.
 const isolate = (H, o = {}) => H.eval((o) => {
@@ -65,42 +64,7 @@ const SCENARIOS = {
     const off = frames.filter(f => f.human && (f.human[0] < 0 || f.human[0] > 1 || f.human[1] < 0 || f.human[1] > 1)).length;
     return { offScreenFrames: off, frames: frames.map(f => `${f.tag}: human ${f.t.human} @${f.human} ball @${f.ball} owner ${f.t.owner} ${f.t.speed} m/s cam ${f.t.cam}`) };
   },
-  // Open pitch: a throw-in to us — the human throws it to the man the stick points at.
-  async 'throw-in'(H) {
-    const { L, W } = await pitch(H);
-    const set = await outOff(H, { x: L * 0.2, z: W - 1, vz: 6, team: 1 });
-    await H.shot('throw-in-ready');
-    const aim = await H.eval(() => { const m = __G.match, p = m.human; const q = m.players.filter(o => o.team === p.team && o !== p && o.line !== 'GK').sort((a, c) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(c.x - p.x, c.z - p.z))[0]; return { to: q.name, dx: q.x - p.x, dz: q.z - p.z }; });
-    // stick toward him (screen: right = +x, up = −z), PASS tapped
-    const keys = []; if (aim.dx > 2) keys.push('KeyD'); if (aim.dx < -2) keys.push('KeyA'); if (aim.dz < -2) keys.push('KeyW'); if (aim.dz > 2) keys.push('KeyS');
-    await H.down(...keys); await H.tap('KeyJ', 5); await H.up(...keys);
-    await H.step(20); await H.shot('throw-in-thrown');
-    await H.step(40);
-    const after = await H.eval(() => { const m = __G.match, b = m.ball; return { phase: m.phase, lastKick: b.lastKick?.kind, owner: b.owner?.name, lastTouch: b.lastTouch?.name }; });
-    return { set, aim, after };
-  },
-  // Open pitch: our corner — the human crosses it (LOB) into the box.
-  async corner(H) {
-    const { L, W } = await pitch(H);
-    const set = await outOff(H, { x: L - 2, z: 12, vx: 7, team: 1 });
-    await H.shot('corner-ready');
-    const box = await H.eval(() => { const m = __G.match, gx = m.oppGoalX(0); return m.players.filter(p => p.team === 0 && Math.abs(p.x - gx) < 17).map(p => p.name); });
-    await H.down('KeyA', 'KeyS'); await H.tap('KeyI', 14); await H.up('KeyA', 'KeyS');
-    await H.film('corner-cross', 60, 3);
-    const after = await H.eval(() => { const m = __G.match, b = m.ball; return { phase: m.phase, lastKick: b.lastKick?.kind, owner: b.owner?.name, lastTouch: b.lastTouch?.name, ballY: +b.y.toFixed(2) }; });
-    return { set, inTheBox: box, after };
-  },
-  // Open pitch: a goal kick to them — their keeper takes it, we stay out of the area.
-  async 'goal-kick'(H) {
-    const { L } = await pitch(H);
-    const set = await outOff(H, { x: L - 2, z: -6, vx: 8, team: 0 });
-    await H.shot('goal-kick-ready');
-    const inArea = await H.eval(() => { const m = __G.match, gx = m.oppGoalX(0), box = __telemetry().pitch.box; return m.players.filter(p => p.team === 0 && Math.abs(p.x - gx) < box.depth && Math.abs(p.z) < box.width / 2).length; });
-    await H.step(150);
-    await H.shot('goal-kick-taken');
-    const after = await H.eval(() => { const m = __G.match, b = m.ball; return { phase: m.phase, lastKick: b.lastKick?.kind, lastTouch: b.lastTouch?.name }; });
-    return { set, opponentsInArea: inArea, after };
-  },
+
   // P2: notices sit in the top band, not over play — a real parry, then KICK OFF + GAMEBREAKER
   async notices(H) {
     await H.step(30);
@@ -156,7 +120,7 @@ const SCENARIOS = {
 };
 
 const H = await harness({ w: +arg('w', 1280), h: +arg('h', 720), touch: arg('touch', '0') === '1' });
-await H.start(format != null ? { FORMAT: +format } : {});
+await H.start({});
 await H.step(90);
 const names = want === 'all' ? Object.keys(SCENARIOS) : [want];
 for (const n of names) {

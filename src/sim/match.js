@@ -8,7 +8,7 @@ import { makePlayer, movePlayer, separatePlayers, clampToArea } from './players.
 import { TEAMS, buildLineup } from './squads.js';
 import { createMatchConfig } from './formats.js';
 import { formationToWorld } from './formations.js';
-import { PITCH, setPitch, inKeeperArea, isCage, lineCrossing, cornerSpot, goalKickSpot, clampToField } from './pitch.js';
+import { PITCH, setPitch, inKeeperArea, clampToField } from './pitch.js';
 import { groundPassSpeed, solveLob, solveStrike } from './kicks.js';
 import { clamp, damp, wrapAngle, angleDiff, mulberry32, smooth } from '../util/math.js';
 import { AIDirector } from './ai/director.js';
@@ -32,7 +32,6 @@ const ACTIONS = {
   volley:   { dur: 0.45, contact: 0.08, lock: 0.25 },
   clear:    { dur: 0.45, contact: 0.14, lock: 0.4 },
   throw:    { dur: 0.55, contact: 0.28, lock: 0 },
-  throwin:  { dur: 0.6, contact: 0.3, lock: 0 },
   header:   { dur: 0.45, contact: 0.0, lock: 0.6 },
   tackle:   { dur: 0.45, contact: 0.13, lock: 0.35 },
   slide:    { dur: 0.95, contact: 0.06, lock: 1, ghost: true, selfMove: true },
@@ -53,7 +52,7 @@ const ACTIONS = {
 const cm = v => Math.round(v * 100);
 const byShape = (a, c) => cm(c.form.x) - cm(a.form.x) || cm(Math.abs(a.form.y - 0.5)) - cm(Math.abs(c.form.y - 0.5)) || a.form.y - c.form.y;
 
-const RESTART_STAT = { THROW_IN: 'throwIns', CORNER: 'corners', GOAL_KICK: 'goalKicks', FREE_KICK: 'freeKicks', PENALTY: 'penalties' };
+const RESTART_STAT = { FREE_KICK: 'freeKicks', PENALTY: 'penalties' };
 // Events after which the ball is on a new line that everyone has to read again.
 const NEW_LINE = new Set(['kick', 'header', 'deflect', 'block', 'save', 'chest', 'tackle']);
 const IC = footballGameplayConfig.interception;
@@ -73,7 +72,7 @@ export class Match {
     const defs = [TEAMS[this.opts.home], TEAMS[this.opts.away]];
     this.teams = defs.map((def, i) => ({
       idx: i, def, dir: i === 0 ? 1 : -1, score: 0, style: 0, gb: 0, gbReady: false, formation: this.cfg.formations[i],
-      stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0, corners: 0, throwIns: 0, goalKicks: 0, freeKicks: 0, offsides: 0, penalties: 0, fouls: 0, yellows: 0, reds: 0 },
+      stats: { shots: 0, onTarget: 0, passes: 0, passesOk: 0, tackles: 0, pannas: 0, cageGoals: 0, skills: 0, saves: 0, possession: 0, freeKicks: 0, offsides: 0, penalties: 0, fouls: 0, yellows: 0, reds: 0 },
     }));
     this.players = [];
     for (let t = 0; t < 2; t++) buildLineup(defs[t], this.cfg.formations[t]).forEach((L, s) => this.players.push(makePlayer(t, s, L, this.opts.seed)));
@@ -282,10 +281,8 @@ export class Match {
     const d = p.dribble;
     const ox = b.x, oz = b.z;
     if (b.inHands) {
-      // A throw-in is held over the head; a keeper holds it to his chest.
-      const over = this.phase === 'restart' && this.restart.type === 'THROW_IN' || (p.action && p.action.type === 'throwin');
-      const k = over ? -0.06 : 0.32;
-      b.x = p.x + fx * k; b.z = p.z + fz * k; b.y = over ? 2.12 : 1.05;
+      // A keeper holds it to his chest.
+      b.x = p.x + fx * 0.32; b.z = p.z + fz * 0.32; b.y = 1.05;
       b.vx = p.vx; b.vz = p.vz; b.vy = 0;
       return;
     }
@@ -325,7 +322,7 @@ export class Match {
     b.y = R; b.vy = 0;
     b.vx = (b.x - ox) / dt; b.vz = (b.z - oz) / dt;
     // keep inside the cage
-    if (isCage()) { const lx = PITCH.halfL - R, lz = PITCH.halfW - R; b.x = clamp(b.x, -lx, lx); b.z = clamp(b.z, -lz, lz); }
+    { const lx = PITCH.halfL - R, lz = PITCH.halfW - R; b.x = clamp(b.x, -lx, lx); b.z = clamp(b.z, -lz, lz); }
   }
 
   loseBall() {
@@ -512,9 +509,7 @@ export class Match {
     const b = this.ball;
     if (b.owner) {
       if (b.owner.dribble.mode === 'knock' && !b.inHands) { this.knockDribble(b.owner, dt); return; }
-      const x0 = b.x, z0 = b.z;
       this.dribble(b.owner, dt);
-      if (!isCage()) this.carriedOver(x0, z0);
       return;
     }
     const ev = [];
@@ -533,24 +528,7 @@ export class Match {
     if (e.type === 'post') b.redirectT = this.time;
     if (e.type === 'post') this.emit({ ...e, type: 'post' });
     else if (e.type === 'goal') { if (this.phase === 'play') this.onGoal(e); }
-    else if (e.type === 'out') { if (this.phase === 'play') this.onOut(e); }
     else this.emit(e);
-  }
-
-  // A ball at a player's feet (or in his hands) taken over a line: out of play — or a
-  // goal, if it went over the goal line between the posts.
-  carriedOver(x0, z0) {
-    const b = this.ball;
-    if (this.phase !== 'play') return;
-    const c = lineCrossing(x0, z0, b.x, b.z, R);
-    if (!c) return;
-    if (c.line === 'goal' && Math.abs(c.z) < PITCH.goalHalfW && b.y < PITCH.goalH) {
-      b.goal = c.side; b.net = c.side;
-      this.onGoal({ type: 'goal', side: c.side, x: b.x, y: b.y, z: b.z, speed: Math.hypot(b.vx, b.vz) });
-      return;
-    }
-    b.out = true;
-    this.onOut({ type: 'out', line: c.line, side: c.side, x: c.x, z: c.z, y: b.y });
   }
 
   // How far from his body a player cutting out a pass can get a foot to it: furthest in
@@ -690,7 +668,6 @@ export class Match {
       // into the field rather than back over the line he's standing by.
       const f = p.facing, dir = this.teams[t].dir;
       let hx = Math.cos(f) * 0.5 + dir * 0.5, hz = Math.sin(f) * 0.5;
-      if (!isCage()) { const aim = clampToField(b.x + hx * 9, b.z + hz * 9, 3); hx = aim.x - b.x; hz = aim.z - b.z; }
       const hl = Math.hypot(hx, hz) || 1;
       vx = hx / hl * 9; vz = hz / hl * 9; vy = 3.5;
     }
@@ -753,9 +730,11 @@ export class Match {
     const b = this.ball;
     // Ball in the +x goal = a goal for the team attacking +x.
     const scoringTeam = this.teams[0].dir === e.side ? 0 : 1;
-    // An indirect free kick straight in (nobody else touched it): a goal kick, not a goal.
+    // An indirect free kick straight in (nobody else touched it): no goal — the keeper's
+    // free kick from his area.
     if (b.restartKind === 'FREE_KICK' && !b.restartDirect && b.restartTaker && b.restartTaker.team === scoringTeam) {
-      this.beginRestart('GOAL_KICK', 1 - scoringTeam, goalKickSpot(e.side, Math.sign(e.z) || 1));
+      const gx = this.ownGoalX(1 - scoringTeam);
+      this.beginRestart('FREE_KICK', 1 - scoringTeam, { x: gx - Math.sign(gx) * PITCH.boxR * 0.6, z: 0 }, 'no goal: indirect');
       return;
     }
     // A man in an offside position blocking the keeper's view of it: no goal, a free kick.
@@ -811,28 +790,13 @@ export class Match {
     this.kickoff(1 - g.team);
   }
 
-  // ------------------------------------------------------------------ out of play & restarts
-  // One explicit state machine for every restart — KICKOFF · THROW_IN · CORNER · GOAL_KICK ·
-  // FREE_KICK (indirect, for offside):
-  //   DEAD   the ball is out: it runs on (to the boards), players pull up, the call is made
+  // ------------------------------------------------------------------ restarts
+  // The cage never goes out of play. One state machine for every stoppage — KICKOFF ·
+  // FREE_KICK (direct for a foul; indirect for offside, the keeper's six seconds) · PENALTY:
+  //   DEAD   play stops: the ball runs on, players pull up, the call is made
   //   SETUP  the ball is placed, the taker stands at it, everyone takes his spot
   //   READY  live the moment the taker plays it (the human's input or the AI's choice)
-  // Who restarts, and from where, comes from the last touch and the pitch; the distance
-  // opponents keep comes from the laws (the pitch's centre-circle radius).
-  onOut(e) {
-    const b = this.ball, lt = b.lastTouch;
-    const last = lt ? lt.team : b.lastKick ? b.lastKick.team : 0;
-    if (e.line === 'touch') {
-      const x = clamp(e.x, -PITCH.halfL + 0.3, PITCH.halfL - 0.3);
-      this.beginRestart('THROW_IN', 1 - last, { x, z: e.side * PITCH.halfW });
-      return;
-    }
-    const defending = this.teams[0].dir === -e.side ? 0 : 1;      // whose goal line it crossed
-    const zs = Math.sign(e.z) || 1;
-    if (last === defending) this.beginRestart('CORNER', 1 - defending, cornerSpot(e.side, zs));
-    else this.beginRestart('GOAL_KICK', defending, goalKickSpot(e.side, zs));
-  }
-
+  // Opponents keep the laws' distance (the centre-circle radius).
   // opts: { direct } for a free kick (a foul: direct; offside and the keeper's six seconds: indirect).
   beginRestart(type, team, spot, reason = null, opts = {}) {
     const b = this.ball;
@@ -848,12 +812,11 @@ export class Match {
     this.emit({ type: 'restart', kind: type, team, x: spot.x, z: spot.z, reason });
   }
 
-  // Who takes it: the keeper takes goal kicks; the best crosser among the wide and
-  // attacking players takes corners; the nearest man (wide players first) throws in.
+  // Who takes it: the best finisher a penalty; a free kick in his own area the keeper,
+  // anywhere else the nearest outfielder.
   restartTaker(r) {
     const team = this.teamPlayers(r.team), out = team.filter(p => p.line !== 'GK');
     const d = p => Math.hypot(p.x - r.spot.x, p.z - r.spot.z);
-    if (r.type === 'GOAL_KICK') return this.keeper(r.team) || out.sort((a, c) => d(a) - d(c))[0];
     if (r.type === 'PENALTY') return out.sort((a, c) => c.attrs.shot - a.attrs.shot)[0];
     if (r.type === 'FREE_KICK') {
       // In his own area the keeper takes it; anywhere else the nearest outfielder.
@@ -861,11 +824,7 @@ export class Match {
       if (gk && inKeeperArea(r.spot.x, r.spot.z, this.ownGoalX(r.team), 0)) return gk;
       return out.sort((a, c) => d(a) - d(c))[0];
     }
-    if (r.type === 'CORNER') {
-      const crossers = out.filter(p => p.line !== 'DEF' || p.roleDef.width >= 0.9);
-      return (crossers.length ? crossers : out).sort((a, c) => (c.attrs.pass * 2 + c.attrs.skill) - (a.attrs.pass * 2 + a.attrs.skill) || d(a) - d(c))[0];
-    }
-    return out.sort((a, c) => (d(a) - (a.roleDef.width >= 0.9 ? 6 : 0)) - (d(c) - (c.roleDef.width >= 0.9 ? 6 : 0)))[0];
+    return out.sort((a, c) => d(a) - d(c))[0];
   }
 
   // SETUP: the ball on its spot and the taker at it — a broadcast cut — then the AI puts
@@ -874,21 +833,16 @@ export class Match {
     const r = this.restart, b = this.ball;
     const taker = r.taker = this.restartTaker(r);
     const sp = r.spot;
-    // The taker faces into the field: square from the touch line, at the goal from a
-    // corner flag, upfield from a goal kick.
-    const ang = r.type === 'THROW_IN' ? Math.atan2(-Math.sign(sp.z), 0)
-      : r.type === 'CORNER' ? Math.atan2(-sp.z, Math.sign(sp.x) * (PITCH.halfL - PITCH.boxR * 0.6) - sp.x)
-      : r.type === 'PENALTY' || (r.type === 'FREE_KICK' && r.direct && Math.hypot(this.oppGoalX(r.team) - sp.x, sp.z) < this.ai.R.shot * 1.4)
+    // The taker faces the goal with a shot on, upfield otherwise.
+    const ang = r.type === 'PENALTY' || (r.type === 'FREE_KICK' && r.direct && Math.hypot(this.oppGoalX(r.team) - sp.x, sp.z) < this.ai.R.shot * 1.4)
         ? Math.atan2(-sp.z, this.oppGoalX(r.team) - sp.x)                 // a shot on: at the goal
-      : r.type === 'FREE_KICK' ? Math.atan2(-sp.z * 0.5, this.teams[r.team].dir * 20)
-      : Math.atan2(-sp.z * 0.3, -sp.x);
+      : Math.atan2(-sp.z * 0.5, this.teams[r.team].dir * 20);
     const fx = Math.cos(ang), fz = Math.sin(ang);
-    if (r.type === 'THROW_IN') { taker.x = sp.x; taker.z = sp.z + Math.sign(sp.z) * 0.25; }
-    else { taker.x = sp.x - fx * 0.45; taker.z = sp.z - fz * 0.45; }
+    taker.x = sp.x - fx * 0.45; taker.z = sp.z - fz * 0.45;
     Object.assign(taker, { vx: 0, vz: 0, speed: 0, heading: ang, facing: ang, action: null, stun: 0, noTouch: 0 });
     Object.assign(b, { x: sp.x, z: sp.z, y: R, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, goal: 0, net: 0, out: false, wallHits: 0, redirectT: 0 });
     this.gainPossession(taker, true);
-    b.inHands = r.type === 'THROW_IN';
+    b.inHands = false;
     b.x = sp.x; b.z = sp.z;
     r.state = 'SETUP'; r.t = 0;
     this.ai.planRestart(r);
@@ -943,24 +897,13 @@ export class Match {
     }
   }
 
-  // The laws' distances while a restart is set: opponents stand off the ball (2 m at a
-  // throw-in, the centre-circle radius at a corner) and outside the penalty area at a
-  // goal kick. Applies to the human's man too.
+  // The laws' distance while a restart is set: opponents stand the centre-circle radius off
+  // the ball (a penalty has its own). Applies to the human's man too.
   keepDistance(r) {
-    const gx = this.ownGoalX(r.team), s = Math.sign(gx), ka = PITCH.keeperArea;
-    const dist = r.type === 'THROW_IN' ? RESTART.throwDist : PITCH.centreR;
+    const s = Math.sign(this.ownGoalX(r.team)), dist = PITCH.centreR;
     if (r.type === 'PENALTY') return this.keepPenaltyDistance(r);
     for (const p of this.players) {
       if (!p.active || p.team === r.team) continue;
-      if (r.type === 'GOAL_KICK') {
-        if (!inKeeperArea(p.x, p.z, gx, 0.6)) continue;
-        if (ka.kind === 'arc') { const dx = p.x - gx, dz = p.z, d = Math.hypot(dx, dz) || 1, k = (ka.radius + 0.6) / d; p.x = gx + dx * k; p.z = dz * k; }
-        else {
-          const inX = ka.depth + 0.6 - (gx - p.x) * s, inZ = ka.width / 2 + 0.6 - Math.abs(p.z);
-          if (inX < inZ) p.x -= s * inX; else p.z = Math.sign(p.z || 1) * (ka.width / 2 + 0.6);
-        }
-        continue;
-      }
       const dx = p.x - r.spot.x, dz = p.z - r.spot.z, d = Math.hypot(dx, dz);
       if (d < dist) { const k = dist / (d || 1); p.x = r.spot.x + (d ? dx * k : -s * dist); p.z = r.spot.z + dz * k; }
     }
@@ -969,8 +912,8 @@ export class Match {
   // A penalty: everyone but the taker and the keeper outside the area, behind the ball and
   // the arc's distance from the spot; the keeper on his line.
   keepPenaltyDistance(r) {
-    const gx = this.oppGoalX(r.team), s = Math.sign(gx), ka = PITCH.keeperArea, sp = r.spot;
-    const edge = gx - s * ((ka.kind === 'rect' ? ka.depth : ka.radius) + 0.6);
+    const gx = this.oppGoalX(r.team), s = Math.sign(gx), sp = r.spot;
+    const edge = gx - s * (PITCH.boxR + 0.6);
     for (const p of this.players) {
       if (!p.active || p === r.taker) continue;
       if (p.line === 'GK' && p.team !== r.team) { p.x = gx - s * 0.15; p.z = clamp(p.z, -PITCH.goalHalfW + 0.3, PITCH.goalHalfW - 0.3); continue; }
@@ -981,17 +924,12 @@ export class Match {
   }
 
   // The taker plays it: the ball is live, and he can't touch it again until someone else has.
-  // kind: 'throwin' at a throw-in, else a kick ('pass' / 'lob' / 'clear').
+  // kind: a kick ('pass' / 'lob' / 'shot').
   takeRestart(p, kind, params = {}) {
     const r = this.restart;
     if (this.phase !== 'restart' || !r || r.state !== 'READY' || p !== r.taker || p.action) return false;
     this.restart = null; this.phase = 'play';
-    let ok;
-    if (r.type === 'THROW_IN') {
-      const target = params.receiver ? this.leadTarget(p, params.receiver, false) : params.target;
-      this.startAction(p, 'throwin', { target, receiver: params.receiver || null });
-      ok = true;
-    } else ok = this.requestKick(p, kind, params);
+    const ok = this.requestKick(p, kind, params);
     if (!ok) { this.restart = r; this.phase = 'restart'; return false; }
     this.ball.restartTaker = p; this.ball.restartKind = r.type; this.ball.restartDirect = !!r.direct;
     return true;
@@ -1032,7 +970,7 @@ export class Match {
       const extra = gap > 0 ? clamp(gap / Math.max(1.5, p.speed - along + 1.5), 0, 0.35) : 0;
       p.action.contact += extra; p.action.dur += extra;
     }
-    if (['pass', 'through', 'lob', 'shot', 'volley', 'clear', 'throw', 'throwin'].includes(type)) this.emit({ type: 'windup', pid: p.id, kind: type });
+    if (['pass', 'through', 'lob', 'shot', 'volley', 'clear', 'throw'].includes(type)) this.emit({ type: 'windup', pid: p.id, kind: type });
     return p.action;
   }
 
@@ -1086,7 +1024,7 @@ export class Match {
 
   fireAction(p, a) {
     switch (a.type) {
-      case 'pass': case 'through': case 'lob': case 'shot': case 'volley': case 'clear': case 'throw': case 'throwin':
+      case 'pass': case 'through': case 'lob': case 'shot': case 'volley': case 'clear': case 'throw':
         return this.fireKick(p, a);
       case 'tackle': return this.fireTackle(p, a);
       case 'stepover': return this.fireStepover(p, a);
@@ -1136,13 +1074,6 @@ export class Match {
       const vx = v.vx * c - v.vz * s, vz = v.vx * s + v.vz * c;
       v.vx = vx; v.vz = vz; v.vy += noise(e * 12) + (manual ? 0 : Math.max(0, a.aim.power - 0.92) * 3);
       T.stats.shots++; p.st.sh++;
-    } else if (a.type === 'throwin') {
-      // Both hands, from over the head: it loops, and only goes so far.
-      b.y = 2.12;
-      const L = solveLob(b.x, b.y, b.z, a.target.x, a.target.z, KICK.throwElev, 0);
-      const k = Math.min(1, KICK.throwMax / Math.hypot(L.vx, L.vy, L.vz));
-      v = { vx: L.vx * k, vy: L.vy * k, vz: L.vz * k, wy: 0 };
-      T.stats.passes++;
     } else if (a.type === 'throw') {
       const d = Math.hypot(a.target.x - b.x, a.target.z - b.z) || 1;
       const s = groundPassSpeed(d, 5);
@@ -1264,6 +1195,9 @@ export class Match {
     if (o.action && ACTIONS[o.action.type].immune) { this.emit({ type: 'tackle', ok: false, pid: p.id, x: b.x, z: b.z }); return; }
     // The referee: what did the foot meet first — the ball, or the man (or from behind)?
     const j = this.referee.judgeTackle(p, o);
+    // The carrier turned his back as the AI went in: a sensible defender pulls out (unless
+    // he's reckless, or already into the man). A human's tackle is his own.
+    if (j.foul && !p.human && !p.ai.reckless && j.tBody > 0) { this.emit({ type: 'tackle', ok: false, pid: p.id, x: b.x, z: b.z, pulledOut: true }); return; }
     if (j.foul) { this.referee.callFoul(p, o, (p.x + o.x) / 2, (p.z + o.z) / 2, j); return; }
     if (dBall > 0.95) {
       this.emit({ type: 'tackle', ok: false, pid: p.id, x: b.x, z: b.z });

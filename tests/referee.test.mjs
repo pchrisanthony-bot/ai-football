@@ -1,14 +1,15 @@
-// The referee, headless: the keeper's protection (no challenge on the ball in his hands,
-// opponents clear his area, six seconds), fouls from the geometry of the challenge (the
-// man before the ball, from behind), cards by severity (two yellows = off), the direct free
-// kick with its wall, the penalty, and the kick-off. The cage has no fouls.
+// The referee in the cage, headless. The keeper's protection (no challenge on the ball in
+// his hands, opponents clear his area, six seconds) and the kick-off always apply. Fouls
+// are street-rules off unless switched on; switched on here: fouls from the geometry of the
+// challenge (the man before the ball, from behind), cards by severity (two yellows = off),
+// the direct free kick with its wall, the penalty.
 import { Match, SIM_DT } from './lib/sim.mjs';
 import { PITCH, inKeeperArea } from '../src/sim/pitch.js';
 import { fromBehind, rayHit } from '../src/sim/rules/referee.js';
 
-// 11v11 in play; only the named players are on (team 0 attacks +x). place: [player, x, z, facing].
-function scene(format = '11v11', opts = {}) {
-  const m = new Match({ format, humanTeam: null, seconds: 9999, seed: 7, ...opts });
+// The cage in play, fouls on; only the named players are on (team 0 attacks +x).
+function scene(opts = {}) {
+  const m = new Match({ humanTeam: null, seconds: 9999, seed: 7, fouls: true, ...opts });
   m.phase = 'play'; m.restart = null;
   const t0 = m.players.filter(p => p.team === 0 && p.line !== 'GK'), t1 = m.players.filter(p => p.team === 1 && p.line !== 'GK');
   return { m, A: t0, D: t1, GK: m.keeper(1) };
@@ -26,8 +27,8 @@ export default function () {
   {
     const { m, A, GK } = scene();
     only(m, [A[0], GK]);
-    place(GK, 48, 0, Math.PI); giveBall(m, GK); m.ball.inHands = true;
-    place(A[0], 46.6, 0.2, 0, 6);
+    place(GK, 14.5, 0, Math.PI); giveBall(m, GK); m.ball.inHands = true;
+    place(A[0], 13.1, 0.2, 0, 6);
     const tackle = m.requestTackle(A[0]), slide = m.requestSlide(A[0]);
     // a slide already on its way when he gathered it can't knock it out of his hands either
     A[0].action = null; m.startAction(A[0], 'slide', {});
@@ -40,9 +41,9 @@ export default function () {
   {
     const { m, A, GK } = scene();
     only(m, [A[0], A[1], A[2], GK]);
-    place(GK, 48, 0, Math.PI); giveBall(m, GK); m.ball.inHands = true;
+    place(GK, 14.5, 0, Math.PI); giveBall(m, GK); m.ball.inHands = true;
     GK.frozen = true;                                            // he holds on (we're watching the others)
-    place(A[0], 45, 2); place(A[1], 42, -6); place(A[2], 40, 10);
+    place(A[0], 13, 1); place(A[1], 12, -2.5); place(A[2], 12.5, 3);
     for (const q of [A[0], A[1], A[2]]) q.frozen = false;
     run(m, 120 * 2.5);
     const inside = [A[0], A[1], A[2]].filter(q => inKeeperArea(q.x, q.z, m.ownGoalX(1), 0.2));
@@ -53,8 +54,8 @@ export default function () {
   {
     const { m, A, GK } = scene();
     only(m, [A[0], GK]);
-    place(GK, 47, 3, Math.PI); giveBall(m, GK); m.ball.inHands = true; GK.frozen = true;
-    place(A[0], 20, 0);
+    place(GK, 14, 1, Math.PI); giveBall(m, GK); m.ball.inHands = true; GK.frozen = true;
+    place(A[0], 2, 0);
     const ev = run(m, 120 * 7, () => m.phase !== 'play');
     const r = m.restart;
     check('a keeper holding it more than six seconds concedes an indirect free kick', r && r.type === 'FREE_KICK' && r.team === 0 && !r.direct && ev.some(e => e.type === 'foul' && e.kind === 'handling'),
@@ -81,10 +82,15 @@ export default function () {
     const s2 = scene(); only(s2.m, [s2.A[0], s2.D[0]]);
     place(s2.A[0], 10, 0, 0); giveBall(s2.m, s2.A[0]);                // carrier facing +x (away), ball ahead of him
     place(s2.D[0], 9.4, 0, 0);                                       // tackler right behind
+    s2.D[0].human = true;                                            // a player's own tackle (an AI would pull out)
     s2.m.startAction(s2.D[0], 'tackle', {}); const ev2 = run(s2.m, 40, () => s2.m.phase !== 'play');
+    const s3 = scene(); only(s3.m, [s3.A[0], s3.D[0]]);
+    place(s3.A[0], 10, 0, 0); giveBall(s3.m, s3.A[0]); place(s3.D[0], 9.4, 0, 0);
+    s3.m.startAction(s3.D[0], 'tackle', {}); const ev3 = run(s3.m, 40);
+    const pulled = ev3.some(e => e.type === 'tackle' && e.pulledOut) && !ev3.some(e => e.type === 'foul');
     const f = ev2.find(e => e.type === 'foul'), r = s2.m.restart;
-    check('a standing tackle: ball first from the front is clean; through the man from behind is a foul → direct free kick', clean && f && r && r.type === 'FREE_KICK' && r.direct && r.team === 0 && s2.m.teams[1].stats.fouls === 1,
-      `front: ${clean ? 'clean' : 'FOUL'} · behind: ${f ? `foul (${s2.m.referee.last.ballFirst ? 'ball' : 'man'} first, behind ${s2.m.referee.last.behind})` : 'no call'} → ${r ? `${r.type} ${r.direct ? 'direct' : 'indirect'} to team ${r.team}` : '—'}`);
+    check('a standing tackle: ball first from the front is clean; through the man from behind is a foul → direct free kick (an AI pulls out of it)', clean && f && r && r.type === 'FREE_KICK' && r.direct && r.team === 0 && s2.m.teams[1].stats.fouls === 1 && pulled,
+      `AI pulls out: ${pulled} · front: ${clean ? 'clean' : 'FOUL'} · behind: ${f ? `foul (${s2.m.referee.last.ballFirst ? 'ball' : 'man'} first, behind ${s2.m.referee.last.behind})` : 'no call'} → ${r ? `${r.type} ${r.direct ? 'direct' : 'indirect'} to team ${r.team}` : '—'}`);
   }
 
   // 6) A slide: winning the ball from the side is clean; clipping the man first is a foul; a
@@ -123,7 +129,7 @@ export default function () {
     const { m, A, D, GK } = scene();
     only(m, [...A.slice(0, 4), ...D.slice(0, 4), GK, m.keeper(0)]);
     for (const q of m.players) q.frozen = false;
-    m.referee.callFoul(D[0], A[0], 46, 2, { behind: false, slide: false, ballFirst: false });
+    m.referee.callFoul(D[0], A[0], 13.5, 1, { behind: false, slide: false, ballFirst: false });
     run(m, 120 * 4, () => m.restart?.state === 'READY');
     const r = m.restart, gx = m.oppGoalX(0);
     const inArea = m.players.filter(q => q.active && q !== r.taker && q.line !== 'GK' && inKeeperArea(q.x, q.z, gx, 0));
@@ -138,9 +144,9 @@ export default function () {
   // 9) A direct free kick in shooting range: a wall on the ball–goal line at the laws' distance.
   {
     const { m, A, D, GK } = scene();
-    only(m, [...A.slice(0, 5), ...D.slice(0, 7), GK]);
+    only(m, [...A.slice(0, 4), ...D.slice(0, 4), GK]);
     for (const q of m.players) q.frozen = false;
-    m.referee.callFoul(D[0], A[0], 30, 6, { behind: false, slide: false, ballFirst: false });
+    m.referee.callFoul(D[0], A[0], 7, 3, { behind: false, slide: false, ballFirst: false });
     run(m, 120 * 4, () => m.restart?.state === 'READY');
     const r = m.restart, b = m.ball, gx = m.oppGoalX(0);
     const ux = (gx - b.x), uz = -b.z, ul = Math.hypot(ux, uz);
@@ -149,13 +155,13 @@ export default function () {
       return Math.abs(along - PITCH.centreR) < 0.6 && lat < 1.8;
     });
     const tooClose = m.players.filter(q => q.active && q.team === 1 && Math.hypot(q.x - b.x, q.z - b.z) < PITCH.centreR - 0.05);
-    check('a direct free kick in range: a wall of 3–4 on the ball–goal line, the laws\' distance away', r && r.type === 'FREE_KICK' && r.direct && wall.length >= 3 && tooClose.length === 0,
+    check('a direct free kick in range: a wall on the ball–goal line, the laws\' distance away', r && r.type === 'FREE_KICK' && r.direct && wall.length >= 2 && tooClose.length === 0,
       `${wall.length} men in the wall at ${PITCH.centreR} m · defenders closer than that: ${tooClose.length}`);
   }
 
   // 10) The kick-off: until the taker has played it, everyone in his own half.
   {
-    const m = new Match({ format: '11v11', humanTeam: null, seconds: 9999, seed: 3 });
+    const m = new Match({ humanTeam: null, seconds: 9999, seed: 3 });
     run(m, 120 * 1.2, () => m.phase === 'play');
     m.step(SIM_DT);
     const taker = m.ball.owner;
@@ -168,17 +174,17 @@ export default function () {
     check('the kick-off: everyone stays in his own half (and out of the circle) until it is played', held, `opponent pushed back to x ${opp.x.toFixed(2)}, ${Math.hypot(opp.x, opp.z).toFixed(2)} m from the spot`);
   }
 
-  // 11) The cage: no referee.
+  // 11) Street rules: no fouls in the cage unless a match switches them on.
   {
-    const cage = new Match({ format: '5v5', humanTeam: null, seed: 1 }), open = new Match({ format: '11v11', humanTeam: null, seed: 1 }), off = new Match({ format: '7v7', humanTeam: null, seed: 1, fouls: false });
-    check('rules.foulsEnabled: off in the cage, on in open formats, overridable per match', !cage.referee.fouls && open.referee.fouls && !off.referee.fouls, `5v5 ${cage.referee.fouls} · 11v11 ${open.referee.fouls} · 7v7 (off) ${off.referee.fouls}`);
+    const off = new Match({ humanTeam: null, seed: 1 }), on = new Match({ humanTeam: null, seed: 1, fouls: true });
+    check('rules.foulsEnabled: off in the cage by default, on when the match asks', !off.referee.fouls && on.referee.fouls, `default ${off.referee.fouls} · switched on ${on.referee.fouls}`);
   }
 
   // 12) AI v AI: a realistic number of fouls, few cards, every set piece taken.
   {
     let fouls = 0, reds = 0, longest = 0, n = 0;
     for (const seed of [1, 2, 3]) {
-      const m = new Match({ format: '11v11', humanTeam: null, seconds: 180, seed });
+      const m = new Match({ humanTeam: null, seconds: 180, seed, fouls: true });
       let rT = 0;
       while (m.phase !== 'fulltime') {
         m.step(SIM_DT);
@@ -187,7 +193,7 @@ export default function () {
       }
       n++;
     }
-    check('AI v AI (11v11): a few fouls, rare reds, every free kick taken', fouls / n <= 3 && reds <= 1 && longest < 6, `${(fouls / n).toFixed(1)} fouls / 3 min · ${reds} reds in ${n} matches · longest stoppage ${longest.toFixed(1)} s`);
+    check('AI v AI (fouls on): a handful of fouls, rare reds, every free kick taken', fouls / n <= 6 && reds <= 1 && longest < 6, `${(fouls / n).toFixed(1)} fouls / 3 min · ${reds} reds in ${n} matches · longest stoppage ${longest.toFixed(1)} s`);
   }
   return out;
 }

@@ -1,11 +1,11 @@
 // The referee in AI v AI: fouls, cards, penalties, free kicks (and that every restart is
-// taken). node tests/diag-referee.mjs [format] [seconds] [seeds] [difficulty]
+// taken), fouls switched on in the cage. node tests/diag-referee.mjs _ [seconds] [seeds] [difficulty]
 import { Match } from '../src/sim/match.js';
 import { SIM_DT } from '../src/config.js';
-const format = process.argv[2] || '11v11', secs = +(process.argv[3] || 300), seeds = +(process.argv[4] || 8), difficulty = +(process.argv[5] || 0.6);
+const format = '5v5', secs = +(process.argv[3] || 300), seeds = +(process.argv[4] || 8), difficulty = +(process.argv[5] || 0.6);
 const t = { fouls: 0, yellow: 0, red: 0, pens: 0, penGoals: 0, fks: 0, fkShots: 0, goals: 0, behind: 0, slide: 0, handling: 0, longestRestart: 0, gkPressed: 0 };
 for (let seed = 1; seed <= seeds; seed++) {
-  const m = new Match({ format, humanTeam: null, seconds: secs, seed, difficulty });
+  const m = new Match({ humanTeam: null, seconds: secs, seed, difficulty, fouls: true });
   let rT = 0, pen = null;
   while (m.phase !== 'fulltime') {
     m.step(SIM_DT);

@@ -5,11 +5,9 @@
 // validated restitution e = 0.70 applied to the NORMAL component (that's what a
 // coefficient of restitution is) and light friction on the tangential component.
 // A 30 m/s strike at 50° leaves the mesh at ~26 m/s — that's why cage banks bite.
-// Open pitches have no walls: the ball goes out of play (swept, see lineCrossing) and
-// runs on into the run-off until the advertising boards stop it.
 // =====================================================================
 import { BALL } from '../config.js';
-import { PITCH, lineCrossing } from './pitch.js';
+import { PITCH } from './pitch.js';
 
 const R = BALL.r;
 
@@ -93,49 +91,8 @@ function contactFriction(b, jmax) {
   return sl - 2.5 * J;
 }
 
-// The goal's net box from OUTSIDE (open pitches: a ball wide of the post into the side
-// netting, over the bar onto the roof of the net, or round the back). The front face is
-// the mouth, so only a ball already behind the goal line can touch it.
-function netOutside(b, s, lineX, ev) {
-  const { goalHalfW, goalH, goalD } = PITCH;
-  const px = (b.x - lineX) * s;                       // depth behind the goal line
-  if (px <= 0 || px > goalD + R || Math.abs(b.z) > goalHalfW + R || b.y > goalH + R) return;
-  const cx = Math.min(goalD, px), cz = Math.max(-goalHalfW, Math.min(goalHalfW, b.z)), cy = Math.min(goalH, b.y);
-  const dx = px - cx, dy = b.y - cy, dz = b.z - cz, d = Math.hypot(dx, dy, dz);
-  if (d >= R) return;
-  // Outward normal of the face it touches (box frame: x = depth behind the line).
-  let nx = 0, ny = 0, nz = 0, qx = cx, qy = cy, qz = cz;
-  if (d > 1e-6) { nx = dx / d; ny = dy / d; nz = dz / d; }
-  else {
-    // Centre inside the box (it never came through the mouth): out by the nearest face.
-    const side = goalHalfW - Math.abs(b.z), top = goalH - b.y, back = goalD - px;
-    if (side <= top && side <= back) { nz = Math.sign(b.z) || 1; qz = nz * goalHalfW; }
-    else if (top <= back) { ny = 1; qy = goalH; }
-    else { nx = 1; qx = goalD; }
-  }
-  // Rest it against the net, then let the net take the pace off it.
-  b.x = lineX + s * (qx + nx * R); b.y = qy + ny * R; b.z = qz + nz * R;
-  const hit = reflect(b, s * nx, ny, nz, BALL.netE, 0.5);
-  if (hit > 0.8) ev && ev.push({ type: 'net', side: s, x: b.x, y: b.y, z: b.z, speed: hit, outside: true });
-}
-
-// Advertising boards round the run-off (open pitches): the ball stops there.
-function boards(b, ev) {
-  const { halfL, halfW, runoff, boardH } = PITCH;
-  if (b.y > boardH + R) return;
-  const bx = halfL + runoff, bz = halfW + runoff;
-  let nx = 0, nz = 0;
-  if (b.z > bz - R) { b.z = bz - R; nz = -1; } else if (b.z < -bz + R) { b.z = -bz + R; nz = 1; }
-  if (b.x > bx - R) { b.x = bx - R; nx = -1; } else if (b.x < -bx + R) { b.x = -bx + R; nx = 1; }
-  if (!nx && !nz) return;
-  const imp = reflect(b, nx, 0, nz, BALL.wallE, BALL.wallT);
-  if (imp > 0) mirrorSpin(b, nx, nz);
-  if (imp > 0.3) ev && ev.push({ type: 'board', x: b.x, y: b.y, z: b.z, nx, nz, speed: imp });
-}
-
 function integrate(b, h, ev) {
   const { halfL, halfW, roofH, goalHalfW, goalH, goalD, boardH } = PITCH;
-  const cage = PITCH.boundary === 'cage';
   const x0 = b.x, y0 = b.y, z0 = b.z;
   const grounded = b.y <= R + 1e-4 && Math.abs(b.vy) < BALL.bounceMinVy;
 
@@ -184,19 +141,19 @@ function integrate(b, h, ev) {
   }
 
   // --- roof net (cage)
-  if (cage && b.y > roofH - R) {
+  if (b.y > roofH - R) {
     b.y = roofH - R;
     const imp = reflect(b, 0, -1, 0, BALL.roofE, 0.8);
     if (imp > 1) ev && ev.push({ type: 'roof', x: b.x, y: roofH, z: b.z, speed: imp });
   }
 
   // --- side walls (cage: full length, full height) 🔒
-  if (cage && b.z > halfW - R) {
+  if (b.z > halfW - R) {
     b.z = halfW - R;
     const imp = reflect(b, 0, 0, -1, BALL.wallE, BALL.wallT);
     if (imp > 0) mirrorSpin(b, 0, -1);
     if (imp > 0.3) { ev && ev.push({ type: 'wall', x: b.x, y: b.y, z: halfW, nx: 0, nz: -1, speed: imp, board: b.y < boardH }); }
-  } else if (cage && b.z < -halfW + R) {
+  } else if (b.z < -halfW + R) {
     b.z = -halfW + R;
     const imp = reflect(b, 0, 0, 1, BALL.wallE, BALL.wallT);
     if (imp > 0) mirrorSpin(b, 0, 1);
@@ -231,8 +188,7 @@ function integrate(b, h, ev) {
         b.vx *= d; b.vz *= d;
       }
       if (hit > 0.8) ev && ev.push({ type: 'net', side: s, x: b.x, y: b.y, z: b.z, speed: hit });
-    } else if (!cage) netOutside(b, s, lineX, ev);
-    else if (past > -R) {
+    } else if (past > -R) {
       // End wall (fence) everywhere except the goal mouth.
       const inMouth = Math.abs(b.z) < goalHalfW && b.y < goalH;
       if (!inMouth) {
@@ -251,17 +207,6 @@ function integrate(b, h, ev) {
     }
   }
 
-  if (!cage) {
-    // Out of play: the whole ball over a line (a ball that went in through the mouth is a goal).
-    if (!b.out) {
-      const c = lineCrossing(x0, z0, b.x, b.z, R);
-      if (c && !(c.line === 'goal' && b.net === c.side)) {
-        b.out = true;
-        ev && ev.push({ type: 'out', line: c.line, side: c.side, x: c.x, z: c.z, y: y0 + (b.y - y0) * c.t });
-      }
-    }
-    boards(b, ev);
-  }
 }
 
 // Advance the free ball by dt. Substeps keep each move ≤ 5 cm, so a 35 m/s

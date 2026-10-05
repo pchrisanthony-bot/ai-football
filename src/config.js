@@ -121,8 +121,6 @@ export const KICK = {
   finessePower: 0.85,     // finesse trades pace for curl
   lobSpeed: 13,
   lobUp: 0.55,            // vertical fraction of lob velocity
-  throwMax: 16,           // m/s: a long throw-in (≈ 25 m)
-  throwElev: 0.32,        // throw-ins loop from over the head
 };
 
 export const RULES = {
@@ -139,7 +137,6 @@ export const RESTART = {
   kickoff: 1.1,           // the kick-off freeze before the whistle
   aiThink: [0.35, 1.0],   // an AI taker's pause before he plays it
   autoTake: 8,
-  throwDist: 2,           // m opponents keep from a throw-in (the laws)
 };
 
 // Player switching (seconds: time to win the ball, so it scales with any pitch).
@@ -173,7 +170,7 @@ export const AI = {
 export const footballGameplayConfig = {
   offside: {
     tolerance: 0.15,            // m: within this of the line is level — onside
-    noOffsideFrom: ['THROW_IN', 'CORNER', 'GOAL_KICK'],   // no offside straight from these
+    noOffsideFrom: [],          // restarts no offside can come straight from (the cage has none)
     interfereDist: 1.0,         // m: an offside man this close to a loose ball, going for it…
     contestDist: 1.6,           // …with an opponent this close to it, is challenging him for it
     screenDist: 0.8,            // m off the line of a shot and within screenKeeper m of the
@@ -265,7 +262,7 @@ export const footballGameplayConfig = {
     aiReckless: [0.25, 0.04],   // chance an AI goes through the back of a man anyway [weak, elite]
     gkHoldMax: 6,               // s a keeper may hold it (then an indirect free kick)
     gkClear: 1.0,               // m opponents keep beyond the area while the keeper has it in his hands
-    wall: { range: 1.35, men: [2, 3, 4] },   // × shooting range: a wall; men by team size (≤7, 9, 11)
+    wall: { range: 1.35, men: 2 },          // × shooting range: a wall of this many
     wallGap: 0.62,              // m between men in the wall
   },
 };

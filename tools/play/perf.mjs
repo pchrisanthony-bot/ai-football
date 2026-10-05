@@ -1,18 +1,17 @@
 // Real-time performance profile of an AI-vs-AI match in Chrome (no screenshots while
 // measuring). Frame-time distribution, spikes, per-section cost and JS heap growth.
-//   node tools/play/perf.mjs [label] [--secs=20] [--gfx=3] [--venue=0] [--format=0] [--w=1280 --h=720] [--cpu=4]
+//   node tools/play/perf.mjs [label] [--secs=20] [--gfx=3] [--venue=0] [--w=1280 --h=720] [--cpu=4]
 // --cpu=N throttles the CPU N× (Chrome's emulation) — a rough stand-in for a phone.
 import fs from 'fs';
 import { harness, sleep } from './harness.mjs';
 
 const arg = (k, d) => { const a = process.argv.find(x => x.startsWith(`--${k}=`)); return a ? a.split('=')[1] : d; };
 const label = process.argv.slice(2).find(a => !a.startsWith('--')) || 'perf';
-const secs = +arg('secs', 20), gfx = +arg('gfx', 3), venue = +arg('venue', 0), format = arg('format', null);
+const secs = +arg('secs', 20), gfx = +arg('gfx', 3), venue = +arg('venue', 0);
 const w = +arg('w', 1280), h = +arg('h', 720);
 
 const H = await harness({ w, h, query: '?profile' });
 const settings = { GRAPHICS: gfx, VENUE: venue };
-if (format != null) settings.FORMAT = +format;
 await H.start(settings, { spectate: true });
 if (+arg('cpu', 1) > 1) await (await H.page.createCDPSession()).send('Emulation.setCPUThrottlingRate', { rate: +arg('cpu', 1) });
 await H.resume();

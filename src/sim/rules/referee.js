@@ -100,12 +100,10 @@ export class RefereeSystem {
   // The kick-off whistle has gone.
   kickoff() { this.kickoffLive = true; this.holdT = 0; }
 
-  // A free kick in a keeper's goal area is taken from its edge.
+  // The keeper's free kick is taken from the edge of his area.
   outOfGoalArea(k) {
-    const gx = this.m.ownGoalX(k.team), s = Math.sign(gx), ga = PITCH.goalArea;
-    let x = k.x, z = k.z;
-    if (ga && Math.abs(x - gx) < ga.depth) x = gx - s * ga.depth;
-    return clampToField(x, z, 0.5);
+    const gx = this.m.ownGoalX(k.team), dx = k.x - gx, d = Math.hypot(dx, k.z) || 1, r = PITCH.boxR + 0.3;
+    return clampToField(gx + dx / d * r, k.z / d * r, 0.5);
   }
 
   // ------------------------------------------------------------------ challenges

@@ -32,10 +32,10 @@ export class AIDirector {
     this.teamT = 0;
     this.team = [this.blankTeam(), this.blankTeam()];
     this.restartSpots = new Map();   // player id → spot for the set piece being taken
-    this.R = aiRanges(m.cfg.rules);  // distances scaled to this match's pitch
+    this.R = aiRanges();             // the distances the AI plays with in the cage
   }
   // For telemetry: the scaled ranges in use.
-  ranges() { const R = this.R; return { s: R.s, g: R.g, shot: Math.round(R.shot), pass: Math.round(R.groundPass), long: Math.round(R.longPass), threat: Math.round(R.threat) }; }
+  ranges() { const R = this.R; return { shot: Math.round(R.shot), pass: Math.round(R.groundPass), threat: Math.round(R.threat) }; }
   blankTeam() { return { phase: 'LOOSE', presser: null, presser2: null, marks: new Map(), chasers: new Set(), runners: new Set(), anchors: new Map(), forcePress: false, gkRush: false, focus: null, cutter: null }; }
 
   get diff() { return this.m.opts.difficulty; }
@@ -142,9 +142,6 @@ export class AIDirector {
       const usedD = new Set(), usedA = new Set();
       for (const [, d, a] of pairs) {
         if (usedD.has(d) || usedA.has(a)) continue;
-        // Zonal formats: a man is picked up only when he's in your zone.
-        const anc = T.anchors.get(d.id);
-        if (Math.hypot(anc.x - a.x, anc.z - a.z) > this.R.markZone) continue;
         // The last line stays as the last line instead of chasing a man upfield.
         if (d.line === 'DEF' && (a.x - m.ownGoalX(t)) * dir > PITCH.halfL) continue;
         T.marks.set(d.id, a); usedD.add(d); usedA.add(a);
@@ -170,11 +167,8 @@ export class AIDirector {
 
   // The nearest spot just outside the keeper's area (goal at gx), clear by gkClear.
   outOfArea(p, gx) {
-    const ka = PITCH.keeperArea, s = Math.sign(gx), c = GP.referee.gkClear + 0.6;
-    if (ka.kind === 'arc') { const dx = p.x - gx, dz = p.z, d = Math.hypot(dx, dz) || 1, r = ka.radius + c; return { x: gx + dx / d * r, z: dz / d * r }; }
-    const outX = gx - s * (ka.depth + c), outZ = Math.sign(p.z || 1) * (ka.width / 2 + c);
-    // out the front, or out the side, whichever is nearer
-    return Math.abs(p.x - outX) <= Math.abs(p.z - outZ) ? { x: outX, z: p.z } : { x: p.x, z: outZ };
+    const dx = p.x - gx, dz = p.z, d = Math.hypot(dx, dz) || 1, r = PITCH.boxR + GP.referee.gkClear + 0.6;
+    return { x: gx + dx / d * r, z: dz / d * r };
   }
 
   // Keep a spot (world x) behind team t's offside line while it has the ball.
@@ -727,10 +721,7 @@ export class AIDirector {
     const m = this.m, spots = this.restartSpots;
     spots.clear();
     this.teamThink(0); this.teamThink(1);
-    if (r.type === 'THROW_IN') this.throwInSpots(r, spots);
-    else if (r.type === 'CORNER') this.cornerSpots(r, spots);
-    else if (r.type === 'GOAL_KICK') this.goalKickSpots(r, spots);
-    else if (r.type === 'PENALTY') this.penaltySpots(r, spots);
+    if (r.type === 'PENALTY') this.penaltySpots(r, spots);
     else if (r.type === 'FREE_KICK' && r.direct) this.wallSpots(r, spots);
     for (const p of m.players) {
       if (!p.active || p === r.taker) continue;
@@ -743,76 +734,10 @@ export class AIDirector {
     }
   }
 
-  // Throw-in: two team-mates show for it — one down the line, one inside — and the
-  // nearest opponents pick them up goal-side.
-  throwInSpots(r, spots) {
-    const m = this.m, sp = r.spot, side = Math.sign(sp.z), dir = m.teams[r.team].dir;
-    const near = q => Math.hypot(q.x - sp.x, q.z - sp.z);
-    const mates = m.teamPlayers(r.team).filter(q => q !== r.taker && q.line !== 'GK').sort((a, c) => near(a) - near(c));
-    const offers = [{ x: sp.x + dir * 7, z: sp.z - side * 3 }, { x: sp.x - dir * 2, z: sp.z - side * 9 }].map(o => clampToField(o.x, o.z, 1.5));
-    const opps = m.teamPlayers(1 - r.team).filter(q => q.line !== 'GK');
-    const gx = m.ownGoalX(1 - r.team);
-    offers.forEach((o, i) => {
-      const q = mates[i];
-      if (!q) return;
-      spots.set(q.id, o);
-      const mk = opps.filter(d => !spots.has(d.id)).sort((a, c) => Math.hypot(a.x - o.x, a.z - o.z) - Math.hypot(c.x - o.x, c.z - o.z))[0];
-      if (mk) spots.set(mk.id, towards(o, { x: gx, z: 0 }, 1.3));
-    });
-  }
-
-  // Corner: the attackers best in the air go to the near post, far post, penalty spot,
-  // the front of the six-yard box and the edge of the area; the deepest one or two stay
-  // back. Defenders mark them goal-side, one guards the near post, one stays up.
-  cornerSpots(r, spots) {
-    const m = this.m, sp = r.spot, s = Math.sign(sp.x), zs = Math.sign(sp.z) || 1;
-    const gx = s * PITCH.halfL, box = PITCH.boxR, gw = PITCH.goalHalfW;
-    const ga = PITCH.goalArea || { depth: box * 0.5, width: PITCH.keeperArea.width * 0.5 };
-    const at = (d, z) => ({ x: gx - s * d, z });
-    const atk = m.teamPlayers(r.team).filter(q => q !== r.taker && q.line !== 'GK');
-    const back = atk.slice().sort((a, c) => a.form.x - c.form.x).slice(0, atk.length > 5 ? 2 : 1);
-    const fwd = atk.filter(q => !back.includes(q)).sort((a, c) => aerial(c) - aerial(a));
-    const boxSpots = [
-      at(Math.min(2.2, ga.depth * 0.5), zs * (gw - 0.4)),        // near post
-      at(ga.depth * 0.9, -zs * (gw + 0.6)),                       // far post
-      at(PITCH.penaltySpot ?? box * 0.65, -zs * 0.8),             // penalty spot
-      at(ga.depth * 1.15, zs * 1.2),                              // front of the six-yard box
-      at(box + 1.5, zs * 2.5),                                    // edge of the area: the second ball
-    ];
-    const inBox = fwd.slice(0, boxSpots.length);
-    inBox.forEach((q, i) => spots.set(q.id, boxSpots[i]));
-    // Defenders: one stays up for the counter; the rest mark (best markers on the
-    // biggest threats), then the near post, then the edge of the area.
-    const defs = m.teamPlayers(1 - r.team).filter(q => q.line !== 'GK');
-    const up = defs.slice().sort((a, c) => c.form.x - a.form.x)[0];
-    const pool = defs.filter(q => q !== up || defs.length < 3).sort((a, c) => (c.attrs.tackle + c.attrs.strength) - (a.attrs.tackle + a.attrs.strength));
-    for (const q of inBox) {
-      const d = pool.shift();
-      if (!d) break;
-      spots.set(d.id, towards(spots.get(q.id), { x: gx, z: 0 }, 0.9));
-    }
-    const zonal = [at(0.5, zs * (gw - 0.3)), at(ga.depth, 0), at(box + 1, -zs * 1.5)];
-    for (const z of zonal) { const d = pool.shift(); if (!d) break; spots.set(d.id, z); }
-  }
-
-  // Goal kick: the centre-backs split to the corners of the area to take it short;
-  // everyone else holds his shape (opponents are kept out of the area by the laws).
-  goalKickSpots(r, spots) {
-    const m = this.m, gx = m.ownGoalX(r.team), s = Math.sign(gx), ka = PITCH.keeperArea;
-    const w = ka.kind === 'rect' ? ka.width / 2 - 1.5 : ka.radius;
-    const cbs = m.teamPlayers(r.team).filter(q => q.line === 'DEF' && q.roleDef.width < 0.5).sort((a, c) => a.form.y - c.form.y);
-    // team-left and team-right corners of the area
-    const dir = m.teams[r.team].dir;
-    const corners = [{ x: gx - s * (PITCH.boxR - 1), z: -dir * w }, { x: gx - s * (PITCH.boxR - 1), z: dir * w }];
-    if (cbs.length === 1) spots.set(cbs[0].id, corners[r.spot.z * dir > 0 ? 1 : 0]);
-    else cbs.slice(0, 2).forEach((q, i) => spots.set(q.id, corners[i]));
-  }
-
   // A penalty: everyone but the taker and the keeper on the edge of the area, out of the arc,
   // a team-mate and an opponent side by side for the rebound.
   penaltySpots(r, spots) {
-    const m = this.m, gx = m.oppGoalX(r.team), s = Math.sign(gx), ka = PITCH.keeperArea;
-    const depth = ka.kind === 'rect' ? ka.depth : ka.radius;
+    const m = this.m, gx = m.oppGoalX(r.team), s = Math.sign(gx), depth = PITCH.boxR;
     const edge = gx - s * (depth + 0.9), spotX = r.spot.x;
     const arcZ = Math.sqrt(Math.max(0, PITCH.centreR ** 2 - (edge - spotX) ** 2)) + 0.8;
     // (the taker's keeper stays in his own goal: his anchor)
@@ -839,7 +764,7 @@ export class AIDirector {
     const d = Math.hypot(gx - sp.x, sp.z);
     if (d > this.R.shot * W.range) return;
     const ux = (gx - sp.x) / d, uz = -sp.z / d, px = -uz, pz = ux;
-    const size = m.cfg.teamSize, n = Math.min(W.men[size <= 7 ? 0 : size <= 9 ? 1 : 2], Math.max(1, Math.round(d / 6)));
+    const n = Math.min(W.men, Math.max(1, Math.round(d / 4)));
     const R = PITCH.centreR + 0.1;
     // shifted half a man toward the near post (the ball's side of the goal)
     const toNear = (Math.sign(sp.z) || 1) * (Math.sign(pz) || 1);
@@ -875,28 +800,6 @@ export class AIDirector {
   decideRestart(p) {
     const m = this.m, r = m.restart, dir = m.teams[p.team].dir;
     if (!r) return false;
-    if (r.type === 'THROW_IN') {
-      const reach = 22;
-      const best = evalPasses(m, p).find(o => o.kind === 'pass' && Math.hypot(o.lead.x - p.x, o.lead.z - p.z) < reach);
-      if (best) return m.takeRestart(p, 'throwin', { receiver: best.r });
-      return m.takeRestart(p, 'throwin', { target: clampToField(p.x + dir * 12, p.z - Math.sign(p.z) * 4, 2) });
-    }
-    if (r.type === 'CORNER') {
-      // Into the box toward the best header of the ball who isn't tightly marked; now and
-      // then a short one to the nearest man.
-      const gx = Math.sign(r.spot.x) * PITCH.halfL;
-      let best = null, bs = -Infinity;
-      for (const q of m.mates(p)) {
-        if (q.line === 'GK' || !inKeeperArea(q.x, q.z, gx, 2)) continue;
-        let mark = 99;
-        for (const o of m.opponents(p)) mark = Math.min(mark, Math.hypot(o.x - q.x, o.z - q.z));
-        const sc = aerial(q) + Math.min(mark, 3) * 0.15 + m.rand() * 0.25;
-        if (sc > bs) { bs = sc; best = q; }
-      }
-      if (best && m.rand() > 0.12) return m.takeRestart(p, 'lob', { target: { x: best.x, z: best.z }, receiver: best });
-      const short = m.mates(p).filter(q => q.line !== 'GK').sort((a, c) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(c.x - p.x, c.z - p.z))[0];
-      return m.takeRestart(p, 'pass', { receiver: short });
-    }
     if (r.type === 'PENALTY') {
       // Low into a corner, or high; the keeper reads it after the strike like any shot.
       const tz = (m.rand() < 0.5 ? -1 : 1) * (PITCH.goalHalfW - 0.4 - m.rand() * 0.8);
@@ -918,8 +821,7 @@ export class AIDirector {
         return m.takeRestart(p, o.kind === 'lob' ? 'lob' : 'pass', o.kind === 'lob' ? { receiver: o.r, target: o.lead } : { receiver: o.r });
       }
     }
-    // Goal kick (and a free kick with nothing on): short to a free centre-back, or long
-    // toward the most advanced man (on his side of the offside line).
+    // Nothing on: short to a free man, or long toward the most advanced (onside).
     const short = evalPasses(m, p).filter(o => o.kind === 'pass' && o.risk < 0.3);
     if (short.length && short[0].u > -0.3 && m.rand() < 0.7) return m.takeRestart(p, 'pass', { receiver: short[0].r });
     const fwd = m.mates(p).filter(q => q.line !== 'GK').sort((a, c) => (c.x - a.x) * dir)[0];

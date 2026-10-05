@@ -1,6 +1,6 @@
 // Gameplay metrics: the numbers every fix is judged by. Runs the real sim + human
 // controller headless and prints/saves a report.
-//   node tools/metrics.mjs [label] [--only=stop,touch,cut,match] [--format=5v5]
+//   node tools/metrics.mjs [label] [--only=stop,touch,cut,match]
 // Results are written to docs/metrics/<label>.json so before/after can be compared.
 import fs from 'fs';
 import { Match, SIM_DT } from '../tests/lib/sim.mjs';
@@ -9,9 +9,8 @@ import { stopTest, touchTest, cutTest } from '../tests/lib/scenarios.mjs';
 const args = process.argv.slice(2);
 const label = args.find(a => !a.startsWith('--')) || 'current';
 const only = (args.find(a => a.startsWith('--only=')) || '--only=stop,touch,cut,match').slice(7).split(',');
-const format = (args.find(a => a.startsWith('--format=')) || '').slice(9) || undefined;
-const matchOpts = format ? { format } : {};
-const out = { label, date: new Date().toISOString(), format: format || 'default' };
+const matchOpts = {};
+const out = { label, date: new Date().toISOString() };
 const f2 = v => (v == null ? '—' : typeof v === 'number' ? +v.toFixed(2) : v);
 
 // ---------------------------------------------------------------- AI matches

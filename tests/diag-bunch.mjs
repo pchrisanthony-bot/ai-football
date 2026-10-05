@@ -1,11 +1,11 @@
 // How often team-mates crowd each other in AI play: the share of play time with two
-// team-mates within 1.2 m (and within 0.8 m), per format.   node tests/diag-bunch.mjs
+// team-mates within 1.2 m (and within 0.8 m), in the cage.   node tests/diag-bunch.mjs
 import { Match } from '../src/sim/match.js';
 import { SIM_DT } from '../src/config.js';
-for (const format of ['5v5', '11v11']) {
+for (const format of ['5v5']) {
   let t = 0, near = 0, touching = 0;
   for (let seed = 1; seed <= 3; seed++) {
-    const m = new Match({ format, humanTeam: null, seconds: 120, seed });
+    const m = new Match({ humanTeam: null, seconds: 120, seed });
     for (let i = 0; i < 120 * 120 * 3 && m.phase !== 'fulltime'; i++) {
       m.step(SIM_DT);
       for (const e of m.drainEvents()) if (e.type === 'goalDone') m.resumeAfterGoal();

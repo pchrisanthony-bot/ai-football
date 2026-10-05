@@ -1,7 +1,7 @@
 // Evaluation functions for the AI: interception, threat, and the utility of
 // every on-ball option. Kept separate so the debug overlay can show the numbers.
 import { KICK, footballGameplayConfig as GP } from '../../config.js';
-import { PITCH, isCage, clampToField } from '../pitch.js';
+import { PITCH } from '../pitch.js';
 import { clamp, segDist2, angleDiff } from '../../util/math.js';
 import { groundPassSpeed, bankAim } from '../kicks.js';
 import { maxSpeed } from '../players.js';
@@ -94,7 +94,7 @@ export function evalShots(m, p) {
   for (const tz of R.shotZ) {
     const tgt = { x: gx, z: tz };
     const options = [{ path: [{ x: b.x, z: b.z }, tgt], bank: 0 }];
-    for (const w of isCage() ? [-1, 1] : []) {                 // banks need the cage
+    for (const w of [-1, 1]) {                                  // off either side wall
       const ba = bankAim(b.x, b.z, gx, tz, w);
       const bx = ba.bounceX;
       if ((bx - b.x) * dir < 1.5 || (gx - bx) * dir < 1.5) continue;
@@ -129,7 +129,6 @@ export function evalPasses(m, p, runners = new Set()) {
     if (r.line === 'GK') continue;
     // A man in an offside position (as this side reads the line) is a free kick waiting to happen.
     const off = m.offside.aiReadsOffside(r) ? GP.offside.aiPassPenalty : 0;
-    if (!isCage()) { const lob = evalLongBall(m, p, r, here); if (lob) { lob.u -= off; lob.offside = !!off; out.push(lob); } }
     const lead = m.leadTarget(p, r, runners.has(r));
     const through = runners.has(r);
     const d = Math.hypot(lead.x - b.x, lead.z - b.z);
@@ -151,7 +150,7 @@ export function evalPasses(m, p, runners = new Set()) {
     out.push({ kind: through ? 'through' : 'pass', r, lead, risk, u: u - off, offside: !!off, label: through ? 'THROUGH BALL' : 'PASS', path: [{ x: b.x, z: b.z }, lead] });
 
     // Wall pass: bank it off the cage around a blocker (street football's 1-2 with the wall).
-    if (risk > 0.35 && isCage()) {
+    if (risk > 0.35) {
       const wSide = r.z + b.z > 0 ? 1 : -1;
       const ba = bankAim(b.x, b.z, lead.x, lead.z, wSide);
       const bx = ba.bounceX, wz = ba.wz;
@@ -172,27 +171,6 @@ export function evalPasses(m, p, runners = new Set()) {
   }
   out.sort((a, c) => c.u - a.u);
   return out;
-}
-
-// A lofted pass (open pitches): over the lane, so only the landing spot can be fought
-// for — a race between the receiver and the nearest defender to where it comes down.
-// Long balls switch play and go in behind; a slight discount for the harder control.
-function evalLongBall(m, p, r, here) {
-  const b = m.ball, R = m.ai.R;
-  const d0 = Math.hypot(r.x - b.x, r.z - b.z);
-  if (d0 < 14 || d0 > R.longPass) return null;
-  const flight = 0.9 + d0 / 20;                               // s in the air (a ~0.55-elevation lob)
-  const lead = clampToField(r.x + r.vx * flight * 0.8, r.z + r.vz * flight * 0.8, 1.5);
-  const tMate = Math.max(flight, reachTime(r, lead.x, lead.z, 0.1));
-  let tOpp = Infinity;
-  for (const o of m.opponents(p)) tOpp = Math.min(tOpp, reachTime(o, lead.x, lead.z, 0.25));
-  const risk = clamp(0.5 + (tMate - tOpp) / 0.5, 0, 1);
-  let open = 99;
-  for (const o of m.opponents(p)) open = Math.min(open, Math.hypot(o.x - lead.x, o.z - lead.z));
-  const value = threat(m, p.team, lead.x, lead.z) + clamp(open / 8, 0, 1) * 0.12;
-  const ok = 1 - risk;
-  const u = ok * value - (1 - ok) * 0.3 - here * 0.5 - 0.02;
-  return { kind: 'lob', r, lead, risk, u, label: 'LONG BALL', path: [{ x: b.x, z: b.z }, lead] };
 }
 
 // ---------------------------------------------------------------- dribbling

@@ -20,7 +20,7 @@ import { Audio } from './audio/audio.js';
 import { HUD } from './ui/hud.js';
 import { Menu, titleScreen, TEAM_IDS, MODES, DIFFS, controlsPanel, statsPanel, lineupsPanel } from './ui/menus.js';
 import { TEAMS } from './sim/squads.js';
-import { FORMATS, FORMAT_IDS } from './sim/formats.js';
+import { FORMATS } from './sim/formats.js';
 import { drillVariants, setupDrill as setupDrillCore } from './game/drill.js';
 import { online, getTag, setTag, saveMatch, saveDrill, fetchBoards } from './net/leaderboard.js';
 import { prof } from './util/profiler.js';
@@ -38,9 +38,7 @@ const VENUES = [
   { label: 'ROOFTOP CAGE', kind: 'rooftop', surface: 'court', sub: 'NIGHT · ASPHALT' },
   { label: 'STADIUM CAGE', kind: 'arena', surface: 'turf', sub: 'FLOODLIT · TURF · CROWD' },
 ];
-// Open pitches are played in the stadium.
-const OPEN_VENUES = [{ label: 'STADIUM', kind: 'arena', surface: 'turf', sub: 'FLOODLIT · TURF · CROWD' }];
-const venuesFor = f => (FORMATS[FORMAT_IDS[f]].pitch === 'cage5' ? VENUES : OPEN_VENUES);
+const F5 = FORMATS['5v5'];
 const WEATHER = [{ label: 'CLEAR' }, { label: 'RAIN' }];
 const venues = {};
 let venue = null;
@@ -79,10 +77,10 @@ const hud = new HUD(ui);
 const screens = document.createElement('div');
 ui.appendChild(screens);
 
-const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, format: 0, formation: 0, offside: 0, fouls: 0, assist: 0 };
-// Rules and pass assist (footballGameplayConfig): offside AUTO follows the format (off in
-// the cage, on in open play); pass assist is the player's, and can change mid-match.
-const OFFSIDE = [{ label: 'AUTO' }, { label: 'ON' }, { label: 'OFF' }];
+const settings = { home: 0, away: 1, mode: 1, diff: 1, gfx: 0, venue: 0, weather: 0, formation: 0, offside: 0, fouls: 0, assist: 0 };
+// Rules and pass assist (footballGameplayConfig): offside and fouls are street rules (off)
+// unless switched on; pass assist is the player's, and can change mid-match.
+const OFFSIDE = [{ label: 'OFF' }, { label: 'ON' }];
 const ASSIST_IDS = ['assisted', 'semi', 'manual', 'arcade'];
 const ASSIST = ASSIST_IDS.map(id => ({ label: MODE_LABELS[id] }));
 const GFX = ['AUTO', 'LOW', 'MEDIUM', 'HIGH', 'ULTRA'];
@@ -178,19 +176,11 @@ function toSetup(spectate = false) {
   G.spectate = spectate;
   const scr = addScreen('screen dim');
   const teamOpts = TEAM_IDS.map(id => ({ label: TEAMS[id].name }));
-  const fmOpts = f => FORMATS[FORMAT_IDS[f]].formations.map(id => ({ label: id }));
-  // The format decides which formations and venues there are to choose from.
-  const formationItem = { label: 'FORMATION', options: fmOpts(settings.format), value: settings.formation, onChange: v => settings.formation = v };
-  const venueItem = { label: 'VENUE', options: venuesFor(settings.format), value: settings.venue, onChange: v => settings.venue = v };
+  const formationItem = { label: 'FORMATION', options: F5.formations.map(id => ({ label: id })), value: settings.formation, onChange: v => settings.formation = v };
+  const venueItem = { label: 'VENUE', options: VENUES, value: settings.venue, onChange: v => settings.venue = v };
   const items = [
     { label: spectate ? 'HOME' : 'YOUR TEAM', options: teamOpts, value: settings.home, onChange: v => settings.home = v, swatch: v => TEAMS[TEAM_IDS[v]].kit.shirt },
     { label: 'OPPONENT', options: teamOpts, value: settings.away, onChange: v => settings.away = v, swatch: v => TEAMS[TEAM_IDS[v]].kit.shirt },
-    { label: 'FORMAT', options: FORMAT_IDS.map(id => ({ label: FORMATS[id].label })), value: settings.format, onChange: v => {
-      settings.format = v; settings.formation = 0; settings.venue = 0;
-      formationItem.options = fmOpts(v); formationItem.value = 0;
-      venueItem.options = venuesFor(v); venueItem.value = 0;
-      G.menu.render();
-    } },
     formationItem,
     { label: 'MATCH', options: MODES, value: settings.mode, onChange: v => settings.mode = v },
     { label: 'AI LEVEL', options: DIFFS, value: settings.diff, onChange: v => settings.diff = v },
@@ -210,14 +200,13 @@ function toSetup(spectate = false) {
 function newMatch() {
   if (settings.home === settings.away) settings.away = (settings.away + 1) % TEAM_IDS.length;
   const md = MODES[settings.mode];
-  const V = venuesFor(settings.format)[settings.venue];
-  const F = FORMATS[FORMAT_IDS[settings.format]];
+  const V = VENUES[settings.venue], F = F5;
   const seed = Math.floor(Math.random() * 1e6);
   return startMatchObject({
     home: TEAM_IDS[settings.home], away: TEAM_IDS[settings.away], mode: md.mode, seconds: md.seconds || 9999, firstTo: md.firstTo || 5,
     difficulty: DIFFS[settings.diff].v, seed,
-    offside: settings.offside === 0 ? null : settings.offside === 1, fouls: settings.fouls === 0 ? null : settings.fouls === 1, passAssist: ASSIST_IDS[settings.assist],
-    format: FORMAT_IDS[settings.format], formations: [F.formations[settings.formation], F.formations[seed % F.formations.length]],
+    offside: settings.offside === 1, fouls: settings.fouls === 1, passAssist: ASSIST_IDS[settings.assist],
+    formations: [F.formations[settings.formation], F.formations[seed % F.formations.length]],
   }, G.spectate ? null : 0, [V.kind, V.surface, settings.weather === 1]);
 }
 
@@ -228,7 +217,7 @@ function toLineups() {
   hud.hide();
   G.state = 'lineups'; G.stateT = 0;
   const scr = addScreen('screen dim');
-  const panel = lineupsPanel(m, `${m.cfg.label} · ${venuesFor(settings.format)[settings.venue].label}${settings.weather ? ' · RAIN' : ''} · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
+  const panel = lineupsPanel(m, `${m.cfg.label} · ${VENUES[settings.venue].label}${settings.weather ? ' · RAIN' : ''} · ${MODES[settings.mode].label} · ${DIFFS[settings.diff].label}`);
   G.menu = new Menu(scr, {
     cls: 'center wide', title: G.spectate ? 'WATCH AI' : 'LINE-UPS', subtitle: `${m.teams[0].def.name}  vs  ${m.teams[1].def.name}`,
     items: [{ label: G.spectate ? 'WATCH  ▶' : 'KICK OFF  ▶', action: beginMatch }, { label: 'BACK', action: () => toSetup(G.spectate) }], side: panel,

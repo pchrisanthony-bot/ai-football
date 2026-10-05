@@ -13,10 +13,10 @@ import { HumanController } from '../../src/game/human.js';
 // defender: 'none' | 'lane' (on the line) | 'near' (1.4 m off) | 'far' (5.5 m off) | a number (m off the line)
 // defAt: where along the lane (0 = passer, 1 = team-mate).
 export function passScene({
-  format = '5v5', dist = 11, offDeg = 0, defender = 'none', defAt = 0.55, receiverRun = 0, seed = 1, hold = 4,
+  dist = 11, offDeg = 0, defender = 'none', defAt = 0.55, receiverRun = 0, seed = 1, hold = 4,
   assist, difficulty = 0.6, frames = 180, button = 'pass', gesture = null, side = 0.5, defFacing = null, passer = null,
 } = {}) {
-  const m = new Match({ format, humanTeam: 0, seconds: 9999, seed, difficulty, ...(assist ? { passAssist: assist } : {}) });
+  const m = new Match({ humanTeam: 0, seconds: 9999, seed, difficulty, ...(assist ? { passAssist: assist } : {}) });
   m.phase = 'play'; m.restart = null;
   const team0 = m.players.filter(p => p.team === 0 && p.line !== 'GK');
   const carrier = team0[0], mate = team0[1];
