@@ -9,7 +9,7 @@
 //     wall pass / dribble / skill / shield.
 // Difficulty changes reaction time, decision noise and press intensity only.
 // =====================================================================
-import { AI, footballGameplayConfig as GP, byDiff } from '../../config.js';
+import { AI, footballGameplayConfig as GP, footballMovementConfig as FM, byDiff } from '../../config.js';
 import { clamp } from '../../util/math.js';
 import { predictPath } from '../ball.js';
 import { maxSpeed } from '../players.js';
@@ -18,10 +18,12 @@ import { formationToWorld } from '../formations.js';
 import { evalShots, evalPasses, evalDribble, frontDefender, pressure, reachTime, threat } from './eval.js';
 import { aiRanges } from './ranges.js';
 import { FirstTouchSystem } from './reception.js';
+import { SupportSystem, ROLE_LABEL } from './support.js';
+import { laneRisk } from './eval.js';
 
 const TEAM_TICK = 0.3;
 // Personal space between team-mates (m) and how hard it steers a run.
-const SEPARATION = { radius: 1.5, weight: 1.1 };
+const SEPARATION = { radius: 2.0, carrier: 3.2, weight: 1.25 };
 // How dangerous a player is in the air (heading at set pieces).
 const aerial = p => p.attrs.strength * 0.6 + p.attrs.shot * 0.4;
 // The point k metres from a toward b.
@@ -34,17 +36,32 @@ export class AIDirector {
     this.team = [this.blankTeam(), this.blankTeam()];
     this.restartSpots = new Map();   // player id → spot for the set piece being taken
     this.R = aiRanges();             // the distances the AI plays with in the cage
+    this.support = new SupportSystem(m, this);   // triangles: who offers which pass
+    this.seen = { owner: null, kickT: -1 };       // the last ball event the brains reacted to
   }
   // For telemetry: the scaled ranges in use.
   ranges() { const R = this.R; return { shot: Math.round(R.shot), pass: Math.round(R.groundPass), threat: Math.round(R.threat) }; }
-  blankTeam() { return { phase: 'LOOSE', presser: null, presser2: null, marks: new Map(), chasers: new Set(), runners: new Set(), anchors: new Map(), forcePress: false, gkRush: false, focus: null, cutter: null }; }
+  blankTeam() { return { phase: 'LOOSE', presser: null, presser2: null, marks: new Map(), chasers: new Set(), runners: new Set(), anchors: new Map(), forcePress: false, gkRush: false, focus: null, cutter: null, support: new Map(), triangles: [], thirdMan: null, cover: null }; }
 
   get diff() { return this.m.opts.difficulty; }
   reaction() { return 0.06 + 0.32 * (1 - this.diff); }
 
   update(dt) {
-    const m = this.m;
+    const m = this.m, b = m.ball;
     this.teamT -= dt;
+    // The ball changed hands or a pass was struck: both sides re-think now (a triangle
+    // re-forms around the new carrier / the receiving point; the passer moves on).
+    const kickT = b.lastKick ? b.lastKick.t : -1;
+    if (b.owner !== this.seen.owner || kickT !== this.seen.kickT) {
+      const newPass = kickT !== this.seen.kickT && !b.owner && b.passTo;
+      this.seen.owner = b.owner; this.seen.kickT = kickT;
+      if (m.phase === 'play') {
+        if (newPass) this.thirdManRun(b.passTo.team);
+        this.teamT = 0;
+        // (staggered by squad slot; keepers read the ball every tick anyway)
+        for (const p of m.players) if (!p.human && p.line !== 'GK') p.ai.thinkT = Math.min(p.ai.thinkT, 0.02 + (p.slot % 5) * 0.012);
+      }
+    }
     if (this.teamT <= 0) {
       this.teamT = TEAM_TICK;
       this.teamThink(0); this.teamThink(1);
@@ -164,6 +181,57 @@ export class AIDirector {
       }
       if (best && o.possessT > 0.4 && this.m.rand() < 0.55 + 0.3 * this.diff) T.runners.add(best);
     }
+    if (T.thirdMan && (m.time > T.thirdMan.until || T.phase !== 'ATTACK')) T.thirdMan = null;
+    // The support around the ball: roles and spots (everyone not already making a run).
+    if (T.phase === 'ATTACK') {
+      const busy = new Set(T.runners);
+      if (T.thirdMan) busy.add(T.thirdMan.p);
+      this.support.plan(t, T, busy);
+    } else { T.support = new Map(); T.triangles = []; }
+    // Defending: the spare man protects the most dangerous open lane from the ball.
+    T.cover = T.phase === 'DEFEND' ? this.coverSpot(t, T) : null;
+  }
+
+  // A pass is on: a third man can go beyond the receiver for the next one (A → B, B → C).
+  // Only off a pass that doesn't go far forward itself (B checking back / across), into
+  // space ahead of where B takes it, with B's next pass to him open.
+  thirdManRun(t) {
+    const m = this.m, T = this.team[t], P = m.reception.plan, dir = m.teams[t].dir;
+    if (!P || P.receiver.team !== t || T.phase === 'DEFEND') return;
+    const rp = P.point || P.receiver, from = m.ball.lastTouch;
+    if ((rp.x - (from ? from.x : rp.x)) * dir > 6) return;
+    let best = null;
+    for (const c of m.teamPlayers(t)) {
+      if (c === P.receiver || c === P.passer || c.line === 'GK' || c.human || c.roleDef.runs < 0.3) continue;
+      for (const dz of [-4, 0, 4]) {
+        const x = this.onside(t, clamp(rp.x + dir * 7, -PITCH.halfL + 3, PITCH.halfL - 3)), z = clamp(rp.z * 0.5 + dz, -PITCH.halfW + 2, PITCH.halfW - 2);
+        if ((x - c.x) * dir < 2) continue;
+        const lane = 1 - laneRisk(m, t, [rp, { x, z }], s => 0.8 + s / 9, null, 0.6, 0.2).risk;
+        const sc = threat(m, t, x, z) + 0.5 * lane + 0.2 * c.roleDef.runs - 0.06 * reachTime(c, x, z, 0);
+        if (!best || sc > best.sc) best = { p: c, spot: { x, z }, sc };
+      }
+    }
+    if (best && best.sc > 0.55 && m.rand() < 0.5 + 0.35 * this.diff) T.thirdMan = { p: best.p, spot: best.spot, until: m.time + FM.support.thirdManRun };
+  }
+
+  // The spare defender: on the most dangerous open lane from the ball to an attacker (the
+  // man the carrier would most like to find), goal-side of it.
+  coverSpot(t, T) {
+    const m = this.m, f = T.focus;
+    if (!f) return null;
+    const g = { x: m.ownGoalX(t), z: 0 };
+    let best = null;
+    for (const a of m.teamPlayers(1 - t)) {
+      if (a === f.p || a.line === 'GK') continue;
+      const open = 1 - laneRisk(m, 1 - t, [{ x: f.x, z: f.z }, { x: a.x, z: a.z }], s => s / 10, null, 0.6, 0.2).risk;
+      const danger = threat(m, 1 - t, a.x, a.z) * (0.3 + 0.7 * open);
+      if (!best || danger > best.danger) best = { a, danger };
+    }
+    if (!best) return null;
+    // 60% of the way down that lane, pulled half back toward the ball–goal line
+    const lx = f.x + (best.a.x - f.x) * 0.6, lz = f.z + (best.a.z - f.z) * 0.6;
+    const k = 0.38, cx = g.x + (f.x - g.x) * k, cz = (f.z - g.z) * k * 0.8;
+    return { x: (lx + cx) / 2, z: (lz + cz) / 2, vs: best.a };
   }
 
   // The nearest spot just outside the keeper's area (goal at gx), clear by gkClear.
@@ -230,11 +298,16 @@ export class AIDirector {
 
     if (T.phase === 'LOOSE') {
       if (T.chasers.has(p)) this.setState(p, 'CHASE', b.lastKick && b.lastKick.team !== p.team);
-      else this.setState(p, 'SUPPORT');
+      else { this.setState(p, 'SUPPORT'); ai.spot = null; }   // (back to his shape — not the last attack's spot)
     } else if (T.phase === 'ATTACK') {
-      this.setState(p, T.runners.has(p) ? 'RUN' : 'SUPPORT');
-      if (ai.state === 'SUPPORT' || ai.pending === 'SUPPORT') ai.spot = this.supportSpot(p);
-      if (ai.state === 'RUN' || ai.pending === 'RUN') ai.spot = this.runSpot(p);
+      const third = T.thirdMan && T.thirdMan.p === p;
+      this.setState(p, T.runners.has(p) || third ? 'RUN' : 'SUPPORT');
+      if (ai.state === 'SUPPORT' || ai.pending === 'SUPPORT') ai.spot = this.support.spotFor(p, T) || this.supportSpot(p);
+      if (ai.state === 'RUN' || ai.pending === 'RUN') ai.spot = third ? T.thirdMan.spot : this.runSpot(p);
+      const sup = T.support.get(p.id);
+      ai.role = third ? ROLE_LABEL.THIRD : ai.state === 'RUN' ? 'RUN' : sup ? sup.label : null;
+      ai.label = ai.role || ai.state;
+      return;
     } else {
       if (T.presser === p || T.presser2 === p) this.setState(p, 'PRESS', T.presser2 === p);
       else if (T.marks.has(p.id)) { this.setState(p, 'MARK'); ai.mark = T.marks.get(p.id); }
@@ -393,6 +466,8 @@ export class AIDirector {
     if (ai.pop) { ai.pop.t -= dt; if (ai.pop.t <= 0) ai.pop = null; }
     if (ai.skillCD > 0) ai.skillCD -= dt;
     p.faceTarget = null; p.jockey = false; p.sprinting = false;
+    // Off the ball a footballer keeps the ball in sight: his chest turns toward it as he runs.
+    p.orient = ['SUPPORT', 'RUN', 'MARK', 'COVER', 'RETREAT', 'IDLE', 'CHASE'].includes(ai.state) && m.phase === 'play' ? { x: b.x, z: b.z } : null;
     if (m.phase === 'restart') return this.restartAct(p);
     if (m.phase !== 'play') { this.stop(p); return; }
     if (p.line === 'GK') return this.keeperAct(p, dt);
@@ -444,10 +519,16 @@ export class AIDirector {
         break;
       }
       case 'SUPPORT': case 'RUN': {
-        const s = ai.spot || T.anchors.get(p.id);
-        const far = Math.hypot(s.x - p.x, s.z - p.z) > 5;
-        p.sprinting = ai.state === 'RUN' || far;
-        this.goTo(p, s.x, s.z, maxSpeed(p, p.sprinting) * (ai.state === 'RUN' ? 1 : 0.8), 0.6);
+        // (a supporter's spot moves with the ball: it's kept relative to it)
+        const live = ai.state === 'SUPPORT' && T.phase === 'ATTACK' && this.support.spotFor(p, T);
+        const s = live || ai.spot || T.anchors.get(p.id);
+        const gap = Math.hypot(s.x - p.x, s.z - p.z);
+        // keeping up with the ball: his spot moves with the carrier, so he needs the carrier's
+        // pace plus enough to close the gap (not a fixed jog the carrier runs straight into)
+        const f = live ? T.supportFocus : null, fsp = f && f.p ? f.p.speed : 0;
+        const need = fsp + gap * 1.2;
+        p.sprinting = ai.state === 'RUN' || gap > 5 || need > maxSpeed(p, false);
+        this.goTo(p, s.x, s.z, ai.state === 'RUN' ? maxSpeed(p, true) : Math.min(maxSpeed(p, p.sprinting), Math.max(maxSpeed(p, false) * 0.8, need)), 0.6);
         if (!p.speed || p.speed < 0.5) p.faceTarget = { x: b.x, z: b.z };
         break;
       }
@@ -517,6 +598,11 @@ export class AIDirector {
         break;
       }
       case 'COVER': {
+        if (T.cover) {
+          this.goTo(p, T.cover.x, T.cover.z, maxSpeed(p, Math.hypot(T.cover.x - p.x, T.cover.z - p.z) > 4), 0.4);
+          ai.label = 'COVER LANE';
+          break;
+        }
         const g = { x: m.ownGoalX(p.team), z: 0 };
         const k = 0.38;
         const tx = g.x + (b.x - g.x) * k, tz = (b.z - g.z) * k * 0.8;
@@ -555,18 +641,24 @@ export class AIDirector {
       if (sep.m > 0.25) this.go(p, sep.x / sep.m, sep.z / sep.m, 1.2 * sep.m); else this.stop(p);
       return;
     }
-    // Head for the spot, steered off any team-mate in his personal space.
+    // Head for the spot, steered off any team-mate in his personal space, braking into it
+    // (constant deceleration: he eases off a few strides out, not a dead stop at a sprint).
     const hx = dx / d + sep.x * SEPARATION.weight, hz = dz / d + sep.z * SEPARATION.weight, hl = Math.hypot(hx, hz) || 1;
-    this.go(p, hx / hl, hz / hl, Math.min(speed, 0.6 + d * 2.6));
+    // (Keepers' footwork and anyone going to the ball — a chase, a press — keep their own pace.)
+    const positional = p.line !== 'GK' && !['CHASE', 'PRESS', 'RECEIVE'].includes(p.ai.state);
+    const cap = positional ? 0.5 + Math.sqrt(2 * FM.movement.arriveBrake * Math.max(0, d - tol * 0.5)) : 0.6 + d * 2.6;
+    this.go(p, hx / hl, hz / hl, Math.min(speed, cap));
   }
 
   // Reynolds separation: a push away from each team-mate inside the personal-space radius,
   // stronger the closer he is. Opponents are left alone (marking is meant to be tight).
   separation(p) {
     let x = 0, z = 0;
-    const R = SEPARATION.radius;
+    const owner = this.m.ball.owner;
     for (const q of this.m.players) {
       if (q === p || q.team !== p.team || !q.active) continue;
+      // the man on the ball gets more room (his team-mates don't crowd him or his space)
+      const R = q === owner ? SEPARATION.carrier : SEPARATION.radius;
       const ox = p.x - q.x, oz = p.z - q.z, dd = Math.hypot(ox, oz);
       if (dd >= R || dd < 1e-4) continue;
       const w = (R - dd) / R / dd;

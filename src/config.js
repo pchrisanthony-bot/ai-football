@@ -286,6 +286,8 @@ export const footballMovementConfig = {
     wHeight: 0.8,               // per m of ball height above the ground-reception band
     groundY: 0.5,               // m: a ball below this is taken with the foot
     wBallPace: 0.05,            // per m/s of ball pace at the point (a slower ball is easier)
+    wNearPasser: 0.9,           // coming short is good — but not back on top of the passer: cost for
+    nearPasser: 5,              //   a receiving point closer than this (m) to where it was struck
     wRunChange: 0.32,           // per m/s his run has to change by (beyond comfortChange): a runner
     comfortChange: 1.2,         //   takes it in his stride rather than stopping to wait for it
     footOffset: 0.16,           // m: he stands so the ball runs to his receiving foot, not his shins
@@ -327,16 +329,19 @@ export const footballMovementConfig = {
   },
   support: {
     // Distances (m) to the ball carrier, tuned to the cage, between under pressure → in space.
-    closeSupportDistance: [3.2, 4.8],
-    mediumSupportDistance: [5, 8],
-    forwardSupportDistance: [6.5, 10.5],
-    safetyDistance: [3.5, 6],
-    minimumSpacing: 3.2,        // m between team-mates (not the carrier)
+    closeSupportDistance: [4.2, 6],
+    mediumSupportDistance: [7, 10.5],
+    forwardSupportDistance: [9, 13],
+    safetyDistance: [5.5, 8],
+    minimumSpacing: 4.5,        // m between team-mates (not the carrier)
     edge: 1.1,                  // m from the cage walls
     pressureNear: 1.6,          // m: the carrier this tightly pressed = compact support…
     pressureFar: 5.5,           // …this free = stretch the triangle
-    hysteresis: 0.06,           // a new role / spot has to be this much better
-    travelWeight: 0.12,         // cost per s of getting there
+    hysteresis: 0.2,            // a new role / spot has to be this much better (half for the role, half the spot)
+    roleSwap: 0.3,              // the jobs are re-dealt only when the side's total is this much better
+    travelWeight: 0.2,          // cost per s of getting there
+    shapeWeight: 0.025,         // cost per m from his place in the team's shape (the team stays spread
+                                //   over the cage — not five men round the ball)
     thirdManRun: 1.6,           // s a third-man run lasts once the pass is on
   },
   triangle: {

@@ -99,7 +99,7 @@ export class PassReceptionSystem {
     const path = exact ? IS.exactPath() : IS.perceived(p.team);
     const age = m.time - (exact ? IS.exactT : IS.predT[p.team]);
     const wait = exact ? 0 : IS.waitFor(p);
-    const pts = path.pts, opp = m.opponents(p);
+    const pts = path.pts, opp = m.opponents(p), from = this.plan ? this.plan.from : m.ball;
     const near = Math.min(3, ...opp.map(o => Math.hypot(o.x - p.x, o.z - p.z)));
     const maxY = near > 3 ? 1.35 : 2.2;
     let best = null, fallback = null;
@@ -130,7 +130,8 @@ export class PassReceptionSystem {
       const T = Math.max(0.15, tb - wait), chg = Math.hypot((q.x - p.x) / T - p.vx, (q.z - p.z) / T - p.vz);
       const cost = RC.wTime * tb + RC.wInto * Math.max(0, vNeed * into - RC.comfortInto)
         + RC.wRunChange * Math.max(0, chg - RC.comfortChange)
-        + RC.wRisk * risk + RC.wHeight * Math.max(0, q.y - RC.groundY) + RC.wBallPace * vb;
+        + RC.wRisk * risk + RC.wHeight * Math.max(0, q.y - RC.groundY) + RC.wBallPace * vb
+        + RC.wNearPasser * Math.max(0, 1 - Math.hypot(q.x - from.x, q.z - from.z) / RC.nearPasser);
       if (!best || cost < best.cost) best = { cost, x: q.x, z: q.z, y: q.y, tb, vx, vz, vb, risk, feasible: true, vRun: dist / T, stride: chg < RC.comfortChange && dist / T > 2.5 };
     }
     const pt = best || fallback || { x: m.ball.x, z: m.ball.z, y: m.ball.y, tb: 0, vx: 0, vz: 0, vb: 0, feasible: false };

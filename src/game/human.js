@@ -49,6 +49,7 @@ export class HumanController {
     const sprint = inp.down('sprint') && p.stamina > 0.05;
     p.sprinting = sprint;
     p.wantShoot = inp.down('shoot');
+    p.orient = null;                      // (the AI's off-ball body shape isn't the person's)
 
     // ---- movement (at a restart: still until it's set, and the taker stays at the ball)
     const r = m.phase === 'restart' ? m.restart : null;

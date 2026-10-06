@@ -1,8 +1,8 @@
 // Players: the match-day player object and the kinematic movement model.
 // "Responsive root, expressive body": the root reacts to input immediately
 // (tapered accel, speed-limited turning); the renderer layers the weight on top.
-import { PLAYER } from '../config.js';
-import { rotateTowards } from '../util/math.js';
+import { PLAYER, footballMovementConfig as FM } from '../config.js';
+import { rotateTowards, angleDiff, clamp } from '../util/math.js';
 import { ROLES } from './roles.js';
 import { PITCH } from './pitch.js';
 
@@ -68,8 +68,16 @@ export function movePlayer(p, dt, lockMove = 1) {
   const m = p.steer || p.move;     // steer: a one-tick override (running onto a knocked-on ball)
   const mag = Math.hypot(m.x, m.z);
   const want = mag > 0.01 && m.speed > 0.05;
-  const vmax = want ? m.speed * lockMove : 0;
+  let vmax = want ? m.speed * lockMove : 0;
   const dx = want ? m.x / mag : 0, dz = want ? m.z / mag : 0;
+  // Running with the chest held toward the ball (p.orient): side-on is slower, backwards
+  // (a backpedal) slower still — nobody sprints backwards.
+  if (want && p.orient && !p.steer) {
+    const off = Math.abs(angleDiff(p.facing, Math.atan2(dz, dx)));
+    const M = FM.movement;
+    const k = off < 0.5 ? 1 : off < Math.PI / 2 ? 1 - (1 - M.sideOn) * (off - 0.5) / (Math.PI / 2 - 0.5) : M.sideOn - (M.sideOn - M.backpedal) * (off - Math.PI / 2) / (Math.PI / 2);
+    vmax *= k;
+  }
 
   const sp = p.speed;
   // Current direction of travel (or the wanted one when standing still).
@@ -111,10 +119,17 @@ export function movePlayer(p, dt, lockMove = 1) {
 
   clampToArea(p);
 
-  // Body facing: toward a target when set (jockey, shielding), else along the run.
+  // Body facing: toward a target when set (jockey, shielding); off the ball, along the run
+  // but with the chest turned toward the ball (p.orient) — fully at a jog or a shuffle,
+  // only so far at pace; else along the run.
   if (p.faceTarget) {
     const f = Math.atan2(p.faceTarget.z - p.z, p.faceTarget.x - p.x);
     p.facing = rotateTowards(p.facing, f, 14 * dt);
+  } else if (p.orient && !p.steer) {
+    const toO = Math.atan2(p.orient.z - p.z, p.orient.x - p.x);
+    const lim = p.speed < 2.6 ? Math.PI : FM.movement.orientMax * clamp(1 - (p.speed - 2.6) / 6, 0.45, 1);
+    const f = p.speed > 0.4 ? p.heading + clamp(angleDiff(p.heading, toO), -lim, lim) : want ? toO : toO;
+    p.facing = rotateTowards(p.facing, f, 9 * dt);
   } else if (p.speed > 0.4) {
     p.facing = rotateTowards(p.facing, p.heading, 14 * dt);
   } else if (want) {
