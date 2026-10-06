@@ -1,9 +1,9 @@
 // Human controller: maps input onto the same Match API the AI uses.
 // Context-sensitive like FIFA: J passes with the ball, switches player without it.
-import { KICK, SWITCH, footballGameplayConfig as GP } from '../config.js';
+import { KICK, SWITCH, footballGameplayConfig as GP, footballMovementConfig as FM } from '../config.js';
 import { maxSpeed } from '../sim/players.js';
 import { clampToField } from '../sim/pitch.js';
-import { clamp, rotateTowards } from '../util/math.js';
+import { clamp, rotateTowards, angleDiff } from '../util/math.js';
 
 export class HumanController {
   constructor(match, team, input) {
@@ -26,6 +26,10 @@ export class HumanController {
     this.m.human = p;
     this.charge = null;
     this.switchCD = 0.25;
+    // The stick as it is at the switch belongs to the last man (a pass's aim, usually): it
+    // isn't the new man's run until it's let go or turned (see receiveAssist).
+    const st = this.in ? this.stick() : { x: 0, z: 0 };
+    this.inherit = Math.hypot(st.x, st.z) > 0.15 ? { ang: Math.atan2(st.z, st.x) } : null;
   }
 
   // Screen → world: the camera looks down −z, so "up" on screen is −z.
@@ -56,6 +60,10 @@ export class HumanController {
     // Street Ball Control with the ball, jockey without it.
     const ctl = inp.down('control');
     p.cushion = ctl;                      // held while a pass arrives: cushion the first touch
+    // The stick is where his first touch goes (sprint held: a bigger touch into space).
+    const sl = Math.hypot(st.x, st.z);
+    p.touchDir = hasStick ? { x: st.x / sl, z: st.z / sl } : null;
+    p.touchPush = sprint ? 1.25 : 1;
     p.closeControl = mine && ctl && !b.inHands;
     p.jockey = !mine && ctl;
     p.faceTarget = p.jockey ? { x: b.x, z: b.z } : null;
@@ -63,7 +71,7 @@ export class HumanController {
 
     if (r) { if (p === r.taker && r.state === 'READY') this.restartInput(dt, st, hasStick); return; }
     if (m.phase !== 'play') return;
-    this.receiveAssist(p, hasStick, sprint);
+    this.receiveAssist(p, st, hasStick, sprint);
     if (inp.pressed('gamebreaker')) m.activateGB(this.team);   // G / L3·R3 / the GB button
     const canUseBall = mine || (!b.owner && m.ballReachableSoon(p, 1.6));
 
@@ -117,16 +125,25 @@ export class HumanController {
     }
   }
 
-  // Receiving: with the stick neutral, the man a pass is meant for goes to meet it (his
-  // touch stays a neutral one — or a cushion with Street Ball Control held). Any stick input
-  // is his own run and his own touch.
-  receiveAssist(p, hasStick, sprint) {
-    const m = this.m, b = m.ball;
+  // Receiving: the man a pass is meant for goes to meet it — the PassReceptionSystem times
+  // his run to be set at his receiving point, body open — and the stick says where his
+  // first touch goes. The stick still held from the pass (control moved to him as it was
+  // struck) is never his run; a fresh one pushed well away from a ball that's far off is the
+  // person choosing not to take it.
+  receiveAssist(p, st, hasStick, sprint) {
+    const m = this.m, P = p.recv, RC = FM.receiving;
     p.autoReceive = false;
-    if (!GP.passing.receiveAssist || hasStick || b.owner || b.passTo !== p) return;
-    const ic = m.ai.intercept(p, m.nearestOpponent(p) > 3 ? 1.3 : 2.2, true);
-    const dx = ic.x - p.x, dz = ic.z - p.z, d = Math.hypot(dx, dz);
-    if (d > 0.3) { p.move.x = dx / d; p.move.z = dz / d; p.move.speed = Math.min(maxSpeed(p, sprint || d > 4), 0.8 + d * 2.6); }
+    if (this.inherit && (!hasStick || Math.abs(angleDiff(this.inherit.ang, Math.atan2(st.z, st.x))) > RC.freshTurn)) this.inherit = null;
+    if (!GP.passing.receiveAssist || !P || P.receiver !== p || !m.reception.live()) return;
+    const steer = m.reception.steer(p);
+    if (!steer) return;
+    if (hasStick && !this.inherit && P.point) {
+      const s = P.stand || P.point, toward = Math.atan2(s.z - p.z, s.x - p.x), far = Math.hypot(s.x - p.x, s.z - p.z);
+      if (far > RC.overrideDist && Math.abs(angleDiff(toward, Math.atan2(st.z, st.x))) > RC.overrideTurn) return;
+    }
+    p.move.x = steer.x; p.move.z = steer.z; p.move.speed = steer.speed;
+    p.sprinting = !!steer.sprint;
+    if (P.face != null && (P.state === 'RECEIVING' || steer.set) && !p.jockey) p.faceTarget = { x: p.x + Math.cos(P.face) * 3, z: p.z + Math.sin(P.face) * 3 };
     p.autoReceive = true;
   }
 

@@ -17,6 +17,7 @@ import { PITCH, clampToField, inKeeperArea } from '../pitch.js';
 import { formationToWorld } from '../formations.js';
 import { evalShots, evalPasses, evalDribble, frontDefender, pressure, reachTime, threat } from './eval.js';
 import { aiRanges } from './ranges.js';
+import { FirstTouchSystem } from './reception.js';
 
 const TEAM_TICK = 0.3;
 // Personal space between team-mates (m) and how hard it steers a run.
@@ -417,11 +418,20 @@ export class AIDirector {
         break;
       }
       case 'RECEIVE': {
-        // A lofted ball with nobody near him: wait for it to drop to chest height.
-        const ic = this.intercept(p, m.nearestOpponent(p) > 3 ? 1.3 : 2.2);
-        this.goTo(p, ic.x, ic.z, maxSpeed(p, true), 0.2);
-        p.sprinting = true;
-        this.planTouch(p, ic);
+        // The PassReceptionSystem's plan: run timed to be set at his receiving point as the
+        // ball gets there (braking into it), body open, the touch planned.
+        const P = p.recv, st = P && m.reception.steer(p);
+        if (!st) {
+          // not read it yet: carry on toward where he was going
+          const s = ai.spot || T.anchors.get(p.id);
+          if (s) this.goTo(p, s.x, s.z, maxSpeed(p, false) * 0.8, 0.6); else this.stop(p);
+          ai.label = 'SUPPORT';
+          break;
+        }
+        this.go(p, st.x, st.z, st.speed);
+        p.sprinting = !!st.sprint;
+        if (P.face != null && (P.state === 'RECEIVING' || st.set)) p.faceTarget = { x: p.x + Math.cos(P.face) * 3, z: p.z + Math.sin(P.face) * 3 };
+        ai.label = P.state === 'RECEIVING' ? 'RECEIVE' : 'ANTICIPATE';
         break;
       }
       case 'CHASE': {
@@ -526,16 +536,11 @@ export class AIDirector {
     }
   }
 
-  // First-touch plan for a receiver: cushion it under pressure, otherwise take it
-  // forward into the space toward goal.
+  // First-touch plan for a loose ball he's going to (the FirstTouchSystem: into space,
+  // away from pressure, or killed and shielded).
   planTouch(p, ic) {
-    const m = this.m;
-    let near = 99;
-    for (const o of m.opponents(p)) near = Math.min(near, Math.hypot(o.x - ic.x, o.z - ic.z));
-    p.cushion = near < 2.6;
-    if (p.cushion) { p.touchDir = null; return; }
-    const gx = m.oppGoalX(p.team), dx = gx - ic.x, dz = -ic.z * 0.6, d = Math.hypot(dx, dz) || 1;
-    p.touchDir = { x: dx / d, z: dz / d };
+    const b = this.m.ball, vb = Math.hypot(b.vx, b.vz);
+    FirstTouchSystem.plan(this.m, p, { x: ic.x, z: ic.z, tb: this.m.time + ic.t, vx: b.vx, vz: b.vz, vb });
   }
 
   go(p, dx, dz, speed) { p.move.x = dx; p.move.z = dz; p.move.speed = speed; }

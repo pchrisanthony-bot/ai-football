@@ -53,7 +53,7 @@ export default function () {
   {
     const at = (off, diff, n = 16) => tally({ dist: 14, offDeg: 0, defender: off, defAt: 0.35, difficulty: diff }, n);
     const cut = t => t.rate('intercepted') + t.rate('deflected');
-    const near = at(1.4, 0.6), mid = at(2.8, 0.6), far = at(5.5, 0.6, 8);
+    const near = at(1.4, 0.6, 96), mid = at(2.8, 0.6, 24), far = at(5.5, 0.6, 8);   // (16–48 seeds swung 19–56%: too few for a 30–90% band)
     check('test 8 · a defender close to the lane has a real chance — not certain — and it falls off with distance', cut(near) >= 0.3 && cut(near) <= 0.9 && cut(mid) <= 0.25 && cut(mid) < cut(near) && cut(far) === 0,
       `1.4 m off: ${pct(cut(near))} · 2.8 m off: ${pct(cut(mid))} · 5.5 m off: ${pct(cut(far))}`);
     const elite = at(0.6, 0.88), weak = at(0.6, 0.35);

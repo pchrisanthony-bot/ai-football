@@ -16,6 +16,7 @@ import { OffsideSystem } from './rules/offside.js';
 import { RefereeSystem } from './rules/referee.js';
 import { PassingSystem } from './passing/passing.js';
 import { InterceptionSystem } from './ai/interception.js';
+import { PassReceptionSystem } from './ai/reception.js';
 import { receptionPoint } from './passing/trajectory.js';
 import { prof } from '../util/profiler.js';
 
@@ -93,6 +94,7 @@ export class Match {
     this.referee = new RefereeSystem(this);   // fouls, cards, free kicks, penalties, the keeper, the kick-off
     this.passing = new PassingSystem(this);   // intent → target → quality → assist → error → trajectory
     this.intercepts = new InterceptionSystem(this);   // who reads the ball when, and who can get to it
+    this.reception = new PassReceptionSystem(this);   // the man a pass is for: where he takes it, his run, his touch
     this.byId = new Map(this.players.map(p => [p.id, p]));
     this.ai = new AIDirector(this);
     this.kickoff(0);
@@ -194,6 +196,7 @@ export class Match {
     if (o) { o.possessT += dt; this.teams[o.team].stats.possession += dt; }
 
     let t0 = prof.now();
+    this.reception.update();
     this.ai.update(dt);
     prof.add('ai', t0);
 
@@ -458,11 +461,9 @@ export class Match {
     const fx = Math.cos(p.facing), fz = Math.sin(p.facing);
     const front = -(ux * fx + uz * fz);                         // 1 = straight at his front
     // Intent: a human's stick, an AI's plan, or a cushion (close control held).
-    let intent = null;
-    // (A human receiver being walked onto the ball by the receive assist hasn't asked for a
-    // direction: that's a neutral touch.)
-    if (p.human) { const ml = Math.hypot(p.move.x, p.move.z); if (!p.autoReceive && ml > 0.1 && p.move.speed > 0.3) intent = { x: p.move.x / ml, z: p.move.z / ml }; }
-    else if (p.touchDir) intent = p.touchDir;
+    // (The person's stick, set as his touch direction by the HumanController — even while the
+    // receive assist walks him onto the ball; the AI's FirstTouchSystem plan.)
+    const intent = p.touchDir || null;
     const mode = force || (p.cushion ? 'cushion' : intent ? 'directed' : 'neutral');
     const near = this.nearestOpponent(p);
     const q = clamp(TOUCH.base + TOUCH.skill * p.attrs.control
@@ -477,18 +478,29 @@ export class Match {
     // Where he puts it.
     const pace = Math.min(1, p.speed / PLAYER.sprint);
     let dx = fx, dz = fz, push = TOUCH.push.neutral;
-    if (mode === 'directed' && intent) { dx = intent.x; dz = intent.z; push = TOUCH.push.directedStill + (TOUCH.push.directedRun - TOUCH.push.directedStill) * pace; }
+    if (mode === 'directed' && intent) {
+      dx = intent.x; dz = intent.z; push = (TOUCH.push.directedStill + (TOUCH.push.directedRun - TOUCH.push.directedStill) * pace) * (p.touchPush ?? 1);
+      // The foot is angled to send it his way: of what's left of the ball's pace, the part
+      // across his chosen line is taken off by a good touch (a poor one lets it run on).
+      const al = resX * dx + resZ * dz, perpX = resX - al * dx, perpZ = resZ - al * dz, k = 1 - TOUCH.redirect * q;
+      resX = al * dx + perpX * k; resZ = al * dz + perpZ * k;
+    }
     else if (mode === 'cushion') push = TOUCH.push.cushion;
     else if (p.speed > 1) { dx = p.vx / p.speed; dz = p.vz / p.speed; }
     const err = (this.rand() - 0.5) * 2 * TOUCH.scatter * (1 - q);
-    let ox = p.vx + dx * push + resX - dz * err, oz = p.vz + dz * push + resZ + dx * err;
+    // His own motion goes into the ball — on a directed touch, all of it along his chosen line
+    // but only some across it (the foot is angled to send it his way).
+    let cvx = p.vx, cvz = p.vz;
+    if (mode === 'directed' && intent) { const al = cvx * dx + cvz * dz; cvx = al * dx + (cvx - al * dx) * TOUCH.carryAcross; cvz = al * dz + (cvz - al * dz) * TOUCH.carryAcross; }
+    let ox = cvx + dx * push + resX - dz * err, oz = cvz + dz * push + resZ + dx * err;
     // The ball keeps rolling: spin to match.
     b.vx = ox; b.vz = oz; b.vy = b.y > 0.3 ? (1 - q) * 1.2 : 0;
     b.wx = oz / R; b.wz = -ox / R; b.wy = 0;
     const outV = Math.hypot(ox, oz);
     const turnDeg = Math.abs(((Math.atan2(oz, ox) - Math.atan2(rvz, rvx) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * 180 / Math.PI;
     const relOut = Math.hypot(ox - p.vx, oz - p.vz);
-    this.lastFirstTouch = { pid: p.id, name: p.name, inV, relIn: rel, outV, relOut, quality: q, turnDeg, mode, t: this.time };
+    this.reception.touched(p);
+    this.lastFirstTouch = { pid: p.id, name: p.name, inV, relIn: rel, outV, relOut, quality: q, turnDeg, mode, t: this.time, intent, out: { x: ox, z: oz } };
     this.emit({ type: 'firstTouch', ...this.lastFirstTouch });
     if (q < TOUCH.miscontrol && relOut > 3.5) {
       // Miscontrol: it's away from him — a loose ball.
@@ -644,6 +656,7 @@ export class Match {
     // it every tick would float it down in slow motion).
     b.vx = p.vx * 0.7 + Math.cos(p.facing) * 0.6; b.vz = p.vz * 0.7 + Math.sin(p.facing) * 0.6; b.vy = head ? -1.2 : -1;
     b.lastTouch = p; p.noTouch = 0.28;
+    this.reception.touched(p);
     if (b.passTo !== p) b.passTo = null;
     this.emit({ type: 'chest', pid: p.id, x: b.x, y: b.y, z: b.z, head });
   }
@@ -1101,6 +1114,8 @@ export class Match {
     b.wallHits = 0;
     b.passTo = a.receiver || null;
     b.passUntil = this.time + 2.2;
+    if (b.passTo && ['pass', 'through', 'lob', 'throw'].includes(a.type)) this.reception.onPass(p, b.passTo, a.passType || a.type);
+    else this.reception.clear();
     p.noTouch = 0.24;
     this.offside.snapshot(p, a.type);      // who is offside is decided now, as he plays it
     const pc = this.passing.ctx && this.passing.ctx.t === this.time ? this.passing.ctx : null;

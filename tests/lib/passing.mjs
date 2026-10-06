@@ -39,10 +39,15 @@ export function passScene({
   m.gainPossession(carrier, true);
   carrier.possessT = 1;                        // settled on the ball
   const inp = new FakeInput(), h = new HumanController(m, 0, inp);
+  for (const q of m.players) q.human = false;
   m.human = null; h.setHuman(carrier);
   const aim = ang + offDeg * Math.PI / 180;
   const ev = [];
   let kick = null, first = null;
+  // Until the pass is played the team-mate does what the scene says (stands, or runs on
+  // along +x); then he's the receiver (the person's, after the switch).
+  const act = m.ai.act.bind(m.ai);
+  m.ai.act = (q, dt) => { if (q === mate && !kick) { q.move.x = 1; q.move.z = 0; q.move.speed = receiverRun; return; } act(q, dt); };
   for (let f = 0; f < frames; f++) {
     const press = f >= 2 && f < 2 + hold;
     const stick = f < 2 + hold + 1;

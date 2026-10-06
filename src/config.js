@@ -81,6 +81,8 @@ export const TOUCH = {
   keepPoor: 0.5,        // …plus this much more at the worst touch
   push: { cushion: 0.3, directedStill: 1.4, directedRun: 2.4, neutral: 0.15 },   // m/s placed in the touch direction
   rebound: 0.55,        // residual that would go through the body bounces back off it
+  redirect: 0.75,       // a directed touch takes this share × quality off the pace across his chosen line
+  carryAcross: 0.4,     // …and passes on this share of his own motion across that line
   scatter: 1.2,         // m/s of sideways error at the worst touch
   miscontrol: 0.17,     // below this quality, with pace left on it, it's a loose ball
   trapFree: 3.0,        // m/s: a ball slower than this (relative) can be stopped dead under the sole;
@@ -266,6 +268,91 @@ export const footballGameplayConfig = {
     wallGap: 0.62,              // m between men in the wall
   },
 };
+// =====================================================================
+// Football movement — receiving a pass, the first touch, body shape, where the eyes go,
+// and the support play (triangles) around the ball. One place to tune the feel of five
+// footballers playing together. Distances are for the 32 × 18 m cage.
+// =====================================================================
+export const footballMovementConfig = {
+  receiving: {
+    // Choosing where to take it (PassReceptionSystem): every point of the ball's path he can
+    // get to before it is scored; the cheapest is his receiving point.
+    setTime: 0.12,              // s he wants to be there before the ball (feet set)
+    prepTime: 0.45,             // s before the ball arrives he's RECEIVING (short steps, body open)
+    wTime: 0.6,                 // cost per s of waiting for it (meet the ball, don't wait for it)
+    wInto: 0.3,                 // per m/s of running into the ball's line above comfortInto
+    comfortInto: 2.2,           // m/s: stepping toward the ball this quickly is free
+    wRisk: 1.4,                 // an opponent getting there first
+    wHeight: 0.8,               // per m of ball height above the ground-reception band
+    groundY: 0.5,               // m: a ball below this is taken with the foot
+    wBallPace: 0.05,            // per m/s of ball pace at the point (a slower ball is easier)
+    wRunChange: 0.32,           // per m/s his run has to change by (beyond comfortChange): a runner
+    comfortChange: 1.2,         //   takes it in his stride rather than stopping to wait for it
+    footOffset: 0.16,           // m: he stands so the ball runs to his receiving foot, not his shins
+    brake: 6.5,                 // m/s² he decelerates at into his receiving spot (arrives set, not at a sprint)
+    minStep: 1.0,               // m/s: slowest adjusting step
+    setRadius: 0.22,            // m: this close to his spot he's set and waits for it
+    openMax: 0.95,              // rad: most his body opens away from the ball (still sees it)
+    // The human: the stick he passed with is still held when control moves to the receiver.
+    // It isn't the receiver's own run until it's let go or turned this far.
+    freshTurn: 0.85,            // rad
+    overrideTurn: 2.35,         // rad: a fresh stick this far from his receiving point…
+    overrideDist: 2.5,          // …that far away: the person is choosing not to take it
+  },
+  firstTouch: {
+    tight: 1.8,                 // m: an opponent this close — protect it / take it away from him
+    close: 3.6,                 // m: closer than this a safer, shorter touch
+    pushTight: 0.55, pushClose: 0.8, pushFree: 1.15,   // × the touch's push
+    rays: 9,                    // directions looked at for the touch into space
+    ray: 3.5,                   // m ahead each is checked for space
+  },
+  lookIK: {
+    eyeYawLimit: 0.61,          // rad (35°)
+    eyePitchLimit: 0.35,        // rad (20°)
+    headYawLimit: 1.05,         // rad (60°) relative to the chest
+    headPitchLimit: 0.61,       // rad (35°)
+    neckShare: 0.45,            // the neck's share of the head's turn
+    spineShare: 0.12,           // …and the upper spine's
+    eyeSpeed: 28,               // 1/s: eyes snap to a new target (saccade)…
+    headSpeed: 7,               // …the head follows (slerp rate)
+    lookAheadTime: 0.16,        // s: he looks where the ball is going, a little
+    scanEvery: [2.2, 4.2],      // s between off-ball scans
+    scanFor: [0.28, 0.45],      // s a scan lasts
+  },
+  movement: {
+    arriveBrake: 6,             // m/s²: AI runs slow into their spot (no full-sprint stops)
+    backpedal: 0.6,             // top speed share running backwards…
+    sideOn: 0.86,               // …and side-on
+    orientMax: 1.25,            // rad: an off-ball runner's chest turns this far off his run toward the ball
+  },
+  support: {
+    // Distances (m) to the ball carrier, tuned to the cage, between under pressure → in space.
+    closeSupportDistance: [3.2, 4.8],
+    mediumSupportDistance: [5, 8],
+    forwardSupportDistance: [6.5, 10.5],
+    safetyDistance: [3.5, 6],
+    minimumSpacing: 3.2,        // m between team-mates (not the carrier)
+    edge: 1.1,                  // m from the cage walls
+    pressureNear: 1.6,          // m: the carrier this tightly pressed = compact support…
+    pressureFar: 5.5,           // …this free = stretch the triangle
+    hysteresis: 0.06,           // a new role / spot has to be this much better
+    travelWeight: 0.12,         // cost per s of getting there
+    thirdManRun: 1.6,           // s a third-man run lasts once the pass is on
+  },
+  triangle: {
+    // Weights of a support spot's score (each part 0..1).
+    openLaneWeight: 0.3,        // the pass from the carrier gets there (ETA race against every opponent)
+    spaceWeight: 0.18,          // nobody near him there
+    angleWeight: 0.16,          // a different angle from the other options (a triangle, not a line)
+    forwardWeight: 0.14,        // ground gained toward goal
+    spacingWeight: 0.1,         // apart from team-mates
+    goalWeight: 0.12,           // dangerous spot
+    preferredAngle: 1.2,        // rad between two options seen from the carrier (~70°)
+    minAngle: 0.45,             // rad: closer than this, one option screens the other
+    laneOk: 0.65,               // an open lane is at least this (1 − risk)
+  },
+};
+
 // AI difficulty (0.35 amateur · 0.6 pro · 0.88 legend) → 0..1 along [weak, elite].
 export const gameplaySkill = diff => Math.max(0, Math.min(1, (diff - 0.2) / 0.7));
 export const byDiff = (pair, diff) => pair[0] + (pair[1] - pair[0]) * gameplaySkill(diff);

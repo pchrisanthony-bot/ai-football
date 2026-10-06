@@ -87,7 +87,7 @@ export default function () {
       Object.assign(B, { x: -8, z: 5, speed: 0, heading: 0, facing: 0 });
       const inp = new FakeInput();
       const h = new HumanController(m, 0, inp);
-      m.human = null; h.setHuman(A); h.switchCD = 0;
+      for (const q of m.players) q.human = false; m.human = null; h.setHuman(A); h.switchCD = 0;
       m.loseBall();
       const tx = -10, tz = 6, d = Math.hypot(tx - 5, tz), v = 14;
       Object.assign(m.ball, { x: 5, y: 0.11, z: 0, vx: (tx - 5) / d * v, vy: 0, vz: tz / d * v, wx: 0, wy: 0, wz: 0, lastTouch: m.players.find(p => p.team === 1 && p.line !== 'GK') });
@@ -109,7 +109,7 @@ export default function () {
     Object.assign(A, { x: -4, z: -2 }); Object.assign(B, { x: -4, z: 2 });
     const inp = new FakeInput();
     const h = new HumanController(m, 0, inp);
-    m.human = null; h.setHuman(A); h.switchCD = 0;
+    for (const q of m.players) q.human = false; m.human = null; h.setHuman(A); h.switchCD = 0;
     const carrier = m.players.find(p => p.team === 1 && p.line === 'ATT');
     Object.assign(carrier, { x: 2, z: 0 });
     m.loseBall(); Object.assign(m.ball, { x: 2.4, z: 0, vx: 0, vz: 0 }); m.gainPossession(carrier, true);

@@ -49,7 +49,7 @@ export function scenario(opts = {}) {
   else { b.x = opts.ballAt?.x ?? 12; b.z = opts.ballAt?.z ?? 7; }
   const inp = new FakeInput();
   const h = new HumanController(m, 0, inp);
-  if (m.human !== p) { m.human = null; h.setHuman(p); }
+  if (m.human !== p) { for (const q of m.players) q.human = false; m.human = null; h.setHuman(p); }
   const events = [];
   // One 60 fps frame: stick in screen space (+x right, +y up = −z), buttons held.
   const frame = (sx = 0, sy = 0, down = [], extra) => {
