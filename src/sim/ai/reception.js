@@ -92,6 +92,33 @@ export class PassReceptionSystem {
     P.state = 'FIRST_TOUCH'; P.touchT = this.m.time;
   }
 
+  // The contact, at the foot (Match.interact): with his plan on and the ball still coming
+  // at him, wait until it's at the receiving foot — out in front, on that side — rather than
+  // take it the moment it's inside his reach. (At its closest, or at his body, he takes it.)
+  atFoot(p, b) {
+    const P = this.plan;
+    if (!P || P.receiver !== p || P.state !== 'RECEIVING' || !P.foot) return true;
+    const fx = Math.cos(p.facing), fz = Math.sin(p.facing), side = P.foot === 'R' ? -1 : 1;   // (+left)
+    // his left is (fz, −fx) in this frame (facing f, up y)
+    const footX = p.x + fx * RC.footReach + fz * 0.14 * side, footZ = p.z + fz * RC.footReach - fx * 0.14 * side;
+    if (Math.hypot(b.x - footX, b.z - footZ) < RC.footRadius) return true;
+    const hd = Math.hypot(b.x - p.x, b.z - p.z) || 1e-6;
+    if (hd < 0.32) return true;
+    // only worth waiting for a ball coming at him, in front, with some pace — and not for long
+    const closing = ((p.x - b.x) * (b.vx - p.vx) + (p.z - b.z) * (b.vz - p.vz)) / hd;
+    const inFront = ((b.x - p.x) * fx + (b.z - p.z) * fz) / hd > 0.2;
+    if (closing < 1.5 || !inFront) return true;
+    // an opponent at the ball: no waiting, he takes it now
+    for (const o of this.m.players) if (o.active && o.team !== p.team && Math.hypot(o.x - b.x, o.z - b.z) < 1.3) return true;
+    // …and only if its line (relative to him) really comes to the foot
+    const rx = b.vx - p.vx, rz = b.vz - p.vz, r2 = rx * rx + rz * rz || 1e-6;
+    const k = Math.max(0, ((footX - b.x) * rx + (footZ - b.z) * rz) / r2);
+    if (Math.hypot(b.x + rx * k - footX, b.z + rz * k - footZ) > RC.footRadius) return true;
+    const now = this.m.time;
+    if (P.waitFrom == null || now - P.waitFrom > 1) P.waitFrom = now;
+    return now - P.waitFrom > 0.25;
+  }
+
   // ------------------------------------------------------------------ where he takes it
   choosePoint(p) {
     const m = this.m, IS = m.intercepts;
@@ -136,6 +163,9 @@ export class PassReceptionSystem {
     }
     const pt = best || fallback || { x: m.ball.x, z: m.ball.z, y: m.ball.y, tb: 0, vx: 0, vz: 0, vb: 0, feasible: false };
     pt.tb = m.time + pt.tb;              // absolute
+    // the moment of contact: the ball reaches his foot a little before his receiving point
+    // (the foot is out in front of him, toward it)
+    pt.tc = pt.tb - RC.footReach / Math.max(1, pt.vb);
     pt.wait = wait;
     return pt;
   }

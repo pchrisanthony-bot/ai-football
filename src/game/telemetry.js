@@ -61,7 +61,23 @@ function gameplay(m) {
   }
   const R = m.referee, k = R.keeperHolding();
   const referee = { fouls: R.fouls, keeper: k ? `${k.name} holding ${R.holdT.toFixed(1)} s` : null, kickoffHold: R.kickoffLive, last: R.last };
-  return { pass, cut, offside, referee, ballV: [r2(b.vx), r2(b.vy), r2(b.vz)] };
+  // The receiver of the pass on its way: his state, the receiving point, when the ball and he get there.
+  const P = m.reception && m.reception.plan;
+  const recv = P && P.point ? {
+    name: P.receiver.name, state: P.state, foot: P.foot, ballIn: r2(P.point.tb - m.time), feasible: P.point.feasible,
+    point: [r2(P.point.x), r2(P.point.z)], risk: P.point.risk != null ? r2(P.point.risk) : null,
+    touch: P.receiver.cushion ? 'cushion' : P.receiver.touchDir ? `${Math.round(Math.atan2(P.receiver.touchDir.z, P.receiver.touchDir.x) * 180 / Math.PI)}°` : 'neutral', protect: !!P.protect,
+  } : null;
+  // The support around the ball: each man's job and his lane; the best triangle's grade.
+  const t = b.owner ? b.owner.team : P ? P.receiver.team : -1;
+  const T = t >= 0 ? m.ai.team[t] : null;
+  const support = T && T.support && T.support.size ? {
+    freedom: T.freedom != null ? r2(T.freedom) : null,
+    roles: [...T.support.entries()].map(([id, s]) => `${m.byId.get(id).name} ${s.label} (lane ${r2(s.lane)})`),
+    triangle: T.triangles && T.triangles[0] ? `${T.triangles[0].grade} ${r2(T.triangles[0].q)}` : null,
+    third: T.thirdMan ? T.thirdMan.p.name : null,
+  } : null;
+  return { pass, cut, offside, referee, recv, support, ballV: [r2(b.vx), r2(b.vy), r2(b.vz)] };
 }
 
 // Compact text block for the debug overlay.
@@ -77,6 +93,8 @@ export function telemetryText(t) {
     t.pass ? `pass ${t.pass.passer} → ${t.pass.target} · ${t.pass.type} (${t.pass.mode}) · power ${t.pass.power ?? '—'} · q ${t.pass.quality} ${t.pass.tier} · err ${t.pass.angErr}° / ${t.pass.paceErr}% · ${t.pass.pace} m/s · assist ${t.pass.correction}${t.pass.receiverOffside ? ' · OFFSIDE' : ''}${t.pass.live ? ' · in flight' : ''}` : '',
     t.cut ? `cut-out: ${t.cut.defender} at (${t.cut.at}) → (${t.cut.point}) · ETA ${t.cut.eta} s vs ball ${t.cut.ballEta} s · ${t.cut.feasible ? 'CAN' : 'cannot'} · ${t.cut.reacted ? 'reacted' : 'not yet reacted'} · ball +0.5 s (${t.cut.ballIn05}) read (${t.cut.readIn05})` : '',
     t.referee && (t.referee.keeper || t.referee.last || t.referee.kickoffHold) ? `referee: ${t.referee.fouls ? 'fouls on' : 'no fouls'}${t.referee.keeper ? ' · ' + t.referee.keeper + ' (protected)' : ''}${t.referee.kickoffHold ? ' · kick-off: own halves' : ''}${t.referee.last ? ` · last foul ${t.referee.last.fouler} on ${t.referee.last.victim}: ${t.referee.last.slide ? 'slide' : 'tackle'}${t.referee.last.behind ? ' from behind' : ''}${t.referee.last.ballFirst ? ' (ball first)' : ' (man first)'} at ${t.referee.last.speed} m/s → ${t.referee.last.card || 'no card'}${t.referee.last.penalty ? ' · PENALTY' : ''}` : ''}` : '',
+    t.recv ? `receiving: ${t.recv.name} ${t.recv.state} · ball there in ${t.recv.ballIn} s at (${t.recv.point})${t.recv.feasible ? '' : ' (stretch)'} · ${t.recv.foot} foot · touch ${t.recv.touch}${t.recv.protect ? ' (protect)' : ''} · risk ${t.recv.risk ?? '—'}` : '',
+    t.support ? `support (freedom ${t.support.freedom}): ${t.support.roles.join(' · ')} · best triangle ${t.support.triangle ?? '—'}${t.support.third ? ' · third man ' + t.support.third : ''}` : '',
     t.offside ? `offside line x ${t.offside.line ?? '—'} (2nd-last ${t.offside.secondLast ?? '—'})${t.offside.snapshot ? ` · frozen at ${t.offside.snapshot.line}: ${t.offside.snapshot.flagged.join(', ') || 'nobody'} offside` : ''}${t.offside.lastCall ? ` · last call ${t.offside.lastCall}` : ''}` : '',
   ];
   return rows.filter(Boolean).join('\n');

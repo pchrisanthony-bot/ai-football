@@ -15,18 +15,20 @@ import { clamp, lerp, smooth, wrapAngle } from '../util/math.js';
 import { PLAYER } from '../config.js';
 import { Gait } from './gait.js';
 import { HumanBody, humanModel } from './humanmodel.js';
+import { LookIK } from './lookik.js';
+import { footballMovementConfig as FM } from '../config.js';
 
 const THIGH = 0.44, SHIN = 0.43;     // bone lengths (local units)
 // Which leg an action poses itself (the other stays planted): 'kick' = the kicking leg,
 // 'both' = the whole body is keyed (dives, slides…). Anything else: both legs on the gait.
 const ACTION_LEGS = {
   pass: 'kick', through: 'kick', shot: 'kick', volley: 'kick', clear: 'kick', lob: 'kick', panna: 'kick',
-  tackle: 'kick', dragback: 'kick', rainbow: 'kick', flickup: 'kick', stepover: 'step',
+  tackle: 'kick', dragback: 'kick', rainbow: 'kick', flickup: 'kick', stepover: 'step', receive: 'kick',
   slide: 'both', dive: 'both', header: 'both', stumble: 'both', getup: 'both', throw: 'both', roulette: 'both',
 };
 // A celebration runs on the gait, except the knee slide at the end of style 2.
 const actionLegs = (a, style) => (a.type === 'celebrate' ? (style === 2 && a.t > 1.5 ? 'both' : null) : ACTION_LEGS[a.type]);
-const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _hc = new THREE.Vector3();
+const _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _hc = new THREE.Vector3(), _eye = new THREE.Vector3();
 const LEGS = ['L', 'R'];
 
 const TAU = Math.PI * 2;
@@ -44,7 +46,7 @@ const LEG = Object.fromEntries(['L', 'R'].map(f => [f, {
   thighX: CH_INDEX[`thigh${f}.x`], thighY: CH_INDEX[`thigh${f}.y`], thighZ: CH_INDEX[`thigh${f}.z`],
   shin: CH_INDEX[`shin${f}.x`], foot: CH_INDEX[`foot${f}.x`], sx: f === 'L' ? 1 : -1,
 }]));
-const HIPS_Y = CH_INDEX['hips.y'], HIPS_PY = CH_INDEX['hips.py'], BODY_X = CH_INDEX['body.x'];
+const HIPS_Y = CH_INDEX['hips.y'], HIPS_PY = CH_INDEX['hips.py'], BODY_X = CH_INDEX['body.x'], SPINE_Y = CH_INDEX['spine.y'];
 // The gait's rhythm — arm swing, hip and shoulder twist, the bob — is a layer added on top
 // of the sprung pose, in exact time with the feet (through the springs it trailed the legs
 // by a quarter of a stride). An action that poses one of these joints takes it over.
@@ -112,7 +114,7 @@ export class Athlete {
     this.lastActionRef = null;
     this.celebrateStyle = 0;
     this.t = 0;
-    this.lookYaw = 0;
+    this.look = new LookIK(p.id + 1);   // eyes, head, neck: where he looks
   }
 
   set(j, axis, v) { this.tgt[CH_INDEX[j + '.' + axis]] = v; }
@@ -166,16 +168,27 @@ export class Athlete {
     // Weight: he leans into a burst of acceleration and sits back against braking.
     this.pitch += (clamp(this.accS * 0.012, -0.15, 0.2) - this.pitch) * (1 - Math.exp(-6 * dt));
 
+    // ---- where he looks: from last frame's chest and head (eyes lead, the head follows)
+    {
+      // (the body as drawn: the root's yaw, then the hips' and spine's twist; yaw + = left)
+      const chest = (Math.PI / 2 - this.yaw.x) - (this.cur[HIPS_Y] + this.cur[SPINE_Y]);
+      this.J.head.getWorldPosition(_eye);
+      this.look.update(dt, p, match, ball, match ? match.time : this.t, chest, _eye);
+    }
+
     this.tgt.fill(0); this.cyc.fill(0);
     this.locomotion(speed, rel, back, p, match, ball);
     this.base.set(this.tgt);
     if (this.touchT < 0.2) { this.touchT += dt; this.touchPose(); }
-    if (a) this.actionPose(a, p, ball, match);
+    // Receiving a pass (set, not on the run): the receiving foot meets the ball as it
+    // arrives — a render-side pose timed by the sim's PassReceptionSystem.
+    const ra = a ? null : this.receivePose(p, match);
+    if (a || ra) this.actionPose(a || ra, p, ball, match);
     else if (ball.owner === p && ball.inHands) this.holdPose();
 
     // ---- springs (inertialized blend toward the target pose). Slowing down, the body
     // eases out of the run more gently than it goes into one (inertia).
-    const omega = a ? 34 : this.accS < -3 ? 12 : 24;     // settles (95%) in ~0.2 s, ~0.4 s when braking
+    const omega = a || ra ? 34 : this.accS < -3 ? 12 : 24;     // settles (95%) in ~0.2 s, ~0.4 s when braking
     for (let i = 0; i < this.cur.length; i++) {
       const x = this.cur[i], v = this.vel[i], tg = this.tgt[i];
       const f = 1 + 2 * dt * omega, oo = omega * omega, hoo = dt * oo, hhoo = dt * hoo, di = 1 / (f + hhoo);
@@ -189,7 +202,7 @@ export class Athlete {
       this.cycW[i] += ((this.tgt[i] !== this.base[i] ? 0 : 1) - this.cycW[i]) * kc;
       this.out[i] += this.cyc[i] * this.cycW[i];
     }
-    this.plantLegs(dt, a, ball);
+    this.plantLegs(dt, a || ra, ball);
     this.syncBody();
   }
 
@@ -202,6 +215,7 @@ export class Athlete {
     J.hips.localToWorld(hc); this.root.worldToLocal(hc);
     const F = this.gait.feet;
     this.body.update(J, this.root, hc, { L: F.L ? F.L.heel || 0 : 0, R: F.R ? F.R.heel || 0 : 0 });
+    this.body.setEyes(this.look.eye.yaw, this.look.eye.pitch);
   }
 
   // ------------------------------------------------------------------ planted legs
@@ -372,14 +386,34 @@ export class Athlete {
       this.set('foreL', 'x', -0.9); this.set('foreR', 'x', -0.9);
     }
 
-    // head: counter the lean, look at the ball
-    const bx = ball.x - p.x, bz = ball.z - p.z;
-    const toBall = Math.atan2(bz, bx);
-    const look = clamp(wrapAngle(p.facing - toBall), -1.1, 1.1);
-    this.lookYaw += (look - this.lookYaw) * 0.15;
-    this.set('head', 'y', this.lookYaw - this.get('spine', 'y') * 0.5);
-    const dist = Math.hypot(bx, bz);
-    this.set('head', 'x', -this.get('spine', 'x') * 0.6 + clamp(0.9 / Math.max(dist, 0.5), 0, 0.5) * 0.6);
+    // head (LookIK): turned toward what he's watching, relative to the chest; the upper
+    // spine takes a little of a big turn; pitch net of the body's lean
+    const LH = this.look.head, sh = FM.lookIK.spineShare;
+    this.add('spine', 'y', LH.yaw * sh);
+    this.set('head', 'y', LH.yaw * (1 - sh));
+    this.set('head', 'x', LH.pitch - (this.get('spine', 'x') + this.get('body', 'x')) * 0.8);
+  }
+
+  // The receive pose's weight now (null: not receiving set). Reaches over the last 0.32 s
+  // before the ball arrives; cushions for 0.3 s after the touch. On the run his stride
+  // takes it (the dribble touch reach does the foot).
+  receivePose(p, match) {
+    const P = p.recv;
+    if (!match || !P || P.receiver !== p || p.speed > 4.5) return null;
+    let k = 0, cushion = false;
+    if (P.state === 'RECEIVING' && P.point) {
+      const left = (P.point.tc ?? P.point.tb) - match.time;     // to the foot meeting the ball
+      if (left > 0.32 || left < -0.1) return null;
+      k = smooth(clamp(1 - left / 0.32, 0, 1));
+    } else if ((P.state === 'FIRST_TOUCH' || P.state === 'IN_POSSESSION') && P.touchT != null) {
+      const since = match.time - P.touchT;
+      if (since > 0.3) return null;
+      k = 1 - smooth(since / 0.3); cushion = true;
+    } else return null;
+    this.kickFoot = P.foot === 'R' ? 1 : -1;
+    const ra = this._ra || (this._ra = { type: 'receive', t: 0, contact: 99, dur: 99, fired: true });
+    ra.k = k; ra.cushion = cushion;
+    return ra;
   }
 
   // Small dribble tap on the swinging leg.
@@ -419,6 +453,19 @@ export class Athlete {
     const bell = (tc, w) => Math.exp(-((t - tc) * (t - tc)) / (w * w));
 
     switch (a.type) {
+      case 'receive': {
+        // reach: the inside of the foot opened to the ball, out in front; cushion: drawn back
+        const k = a.k, cush = a.cushion ? k : 0;
+        this.set('thigh' + kick, 'x', -0.48 * k + 0.26 * cush);
+        this.set('thigh' + kick, 'y', sgn * -0.6 * k);
+        this.set('shin' + kick, 'x', 0.22 * k + 0.32 * cush);
+        this.set('foot' + kick, 'x', -0.1 * k);
+        this.set('thigh' + plant, 'x', -0.12 * k); this.set('shin' + plant, 'x', 0.38 * k);
+        this.add('spine', 'x', 0.1 * k);
+        this.set('arm' + armP, 'z', (K > 0 ? 1 : -1) * 0.35 * k);
+        this.set('arm' + armK, 'z', -(K > 0 ? 1 : -1) * 0.22 * k);
+        break;
+      }
       case 'pass': case 'through': case 'shot': case 'volley': case 'clear': case 'lob': case 'panna': {
         const power = a.type === 'shot' || a.type === 'clear' ? 1 : a.type === 'volley' ? 0.9 : a.type === 'lob' ? 0.8 : a.type === 'panna' ? 0.3 : 0.6;
         const back = env(0, Math.max(c - 0.03, 0.02)) * (1 - env(c - 0.03, c));      // backswing

@@ -116,7 +116,7 @@ export class MatchView {
     this.updateMarker(dt, human);
     this.updatePreview(human);
     this.updatePassRing(dt);
-    this.debugDraw.update(dt, m, !!this.ctx.hud?.debug);
+    this.debugDraw.update(dt, m, !!this.ctx.hud?.debug, this.athletes);
     this.record(dt);
   }
 

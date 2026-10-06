@@ -213,7 +213,8 @@ export class HumanBody {
       socks: rim(new THREE.MeshStandardMaterial({ color: kitC.socks, roughness: 0.9, normalMap: T.skinDetail, normalScale: new THREE.Vector2(0.4, 0.4) })),
       shirt: cloth(), shorts: cloth(0.55),
       boots: new THREE.MeshStandardMaterial({ map: T.boots.diffuse, color: look.boot, roughness: 0.4, metalness: 0.05 }),
-      eyes: new THREE.MeshPhysicalMaterial({ map: T['eye_' + look.eyes].diffuse, roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.03 }),
+      // (the cornea shell maps to the texture's transparent spot: cut out, or it's a dark film over the eye)
+      eyes: new THREE.MeshPhysicalMaterial({ map: T['eye_' + look.eyes].diffuse, roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.03, alphaTest: 0.5 }),
       brows: new THREE.MeshStandardMaterial({ map: T.brows.diffuse, color: look.hairColor, transparent: true, alphaTest: 0.05, depthWrite: false, roughness: 0.8 }),
       lashes: new THREE.MeshStandardMaterial({ map: T.lashes.diffuse, color: '#111111', transparent: true, alphaTest: 0.05, depthWrite: false }),
     };
@@ -234,9 +235,40 @@ export class HumanBody {
     }
     this.mats = mats;
     this.kitMap = kitMap;
+    this.lookEyes(mats.eyes); this.lookEyes(this.lowMats.eyes);
     this.useDetail();
     BODIES.add(this);
     this.calibrate();
+  }
+
+  // The eyes turn in their sockets (the rig has no eye bones): each eyeball is rotated about
+  // its own centre before skinning, so it moves within the head. Centres from the geometry
+  // (bind space: +Y up, +Z the way he faces, +X his left).
+  lookEyes(mat) {
+    if (!this.eyeU) {
+      const em = this.slots.find(([, n]) => n === 'eyes');
+      const c = [new THREE.Vector3(), new THREE.Vector3()], n = [0, 0];
+      if (em) {
+        const pos = em[0].geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) { const k = pos.getX(i) > 0 ? 0 : 1; c[k].x += pos.getX(i); c[k].y += pos.getY(i); c[k].z += pos.getZ(i); n[k]++; }
+      }
+      this.eyeU = { uEyeRot: { value: new THREE.Matrix3() }, uEyeL: { value: c[0].multiplyScalar(1 / Math.max(1, n[0])) }, uEyeR: { value: c[1].multiplyScalar(1 / Math.max(1, n[1])) } };
+    }
+    const U = this.eyeU;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = 'uniform mat3 uEyeRot; uniform vec3 uEyeL; uniform vec3 uEyeR;\n' + sh.vertexShader
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n  objectNormal = uEyeRot * objectNormal;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n  { vec3 ec = position.x > 0.0 ? uEyeL : uEyeR; transformed = ec + uEyeRot * (transformed - ec); }');
+    };
+    mat.customProgramCacheKey = () => 'eye-look';
+  }
+
+  // yaw + = to his left, pitch + = down, relative to the head (LookIK).
+  setEyes(yaw, pitch) {
+    if (!this.eyeU) return;
+    _m4a.makeRotationY(yaw); _m4b.makeRotationX(pitch);
+    this.eyeU.uEyeRot.value.setFromMatrix4(_m4a.multiply(_m4b));
   }
 
   useDetail() {
@@ -357,6 +389,7 @@ function bakeMorphs(m, weights) {
   m.morphTargetDictionary = undefined;
 }
 
+const _m4a = new THREE.Matrix4(), _m4b = new THREE.Matrix4();
 const _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _qx = new THREE.Quaternion();
 const _ax = new THREE.Vector3(1, 0, 0), _az = new THREE.Vector3(0, 0, 1), _v0 = new THREE.Vector3(), _qi = new THREE.Quaternion();
 

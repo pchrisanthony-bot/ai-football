@@ -291,6 +291,8 @@ export const footballMovementConfig = {
     wRunChange: 0.32,           // per m/s his run has to change by (beyond comfortChange): a runner
     comfortChange: 1.2,         //   takes it in his stride rather than stopping to wait for it
     footOffset: 0.16,           // m: he stands so the ball runs to his receiving foot, not his shins
+    footReach: 0.38,            // m in front of him the receiving foot meets the ball…
+    footRadius: 0.3,            // …the touch happens when it's this close to the foot (or at its closest)
     brake: 6.5,                 // m/s² he decelerates at into his receiving spot (arrives set, not at a sprint)
     minStep: 1.0,               // m/s: slowest adjusting step
     setRadius: 0.22,            // m: this close to his spot he's set and waits for it

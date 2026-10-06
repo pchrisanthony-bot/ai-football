@@ -607,6 +607,8 @@ export class Match {
           else ctl = ctl && rel < ctlMax - IC.fastCtl;
         }
         if (ctl) {
+          // the man it's for takes it at his receiving foot, not the moment it's in reach
+          if (!theirs && b.passTo === p && !this.reception.atFoot(p, b)) continue;
           if (!this.offside.touch(p, 'control')) this.firstTouch(p, null, theirs ? 0.06 + 0.2 * clamp((lat - 0.2) / 0.35, 0, 1) : 0);
           return;
         }
