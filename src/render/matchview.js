@@ -24,7 +24,6 @@ export class MatchView {
     for (const p of match.players) {
       const kit = match.teams[p.team].def.kit;
       const a = new Athlete(p, kit);
-      a.root.traverse(o => { if (o.isMesh) o.castShadow = true; });
       this.group.add(a.root);
       this.athletes.set(p.id, a);
     }
@@ -94,6 +93,7 @@ export class MatchView {
 
   dispose() {
     this.ctx.scene.remove(this.group);
+    for (const a of this.athletes.values()) a.body.dispose();
     this.group.traverse(o => { if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose?.(); });
   }
 

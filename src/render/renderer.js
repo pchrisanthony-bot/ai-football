@@ -1,6 +1,7 @@
 // Renderer + post-processing: ACES tone mapping, bloom, and a grade pass
 // (vignette, contrast, GAMEBREAKER colour shift, goal flash).
 import * as THREE from 'three';
+import { setHumanDetail } from './humanmodel.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -87,6 +88,7 @@ export function createRenderer(container) {
     bloom.enabled = q.bloom;
     for (const rt of [composer.renderTarget1, composer.renderTarget2]) { rt.samples = q.samples; rt.dispose(); }
     for (const b of state.blobs) b.visible = q.shadows === 0;
+    setHumanDetail(level === 0);
     scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.needsUpdate = true; }); });
     onResize();
     return q;

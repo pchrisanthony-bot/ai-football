@@ -9,6 +9,7 @@ import { buildVenue } from './render/venue.js';
 import { FX } from './render/fx.js';
 import { CameraRig } from './render/camera.js';
 import { MatchView } from './render/matchview.js';
+import { loadHumanModel } from './render/humanmodel.js';
 import { Match } from './sim/match.js';
 import { SIM_DT, setSurface } from './config.js';
 import { PITCH } from './sim/pitch.js';
@@ -607,15 +608,18 @@ if (TOUCH) addEventListener('pointerdown', () => {
   if (document.fullscreenElement || !el.requestFullscreen) return;
   el.requestFullscreen({ navigationUI: 'hide' }).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
 }, { once: true });
-toTitle();
-R.renderer.compile(R.scene, R.camera);
-requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
-setTimeout(() => { loading.style.opacity = 0; setTimeout(() => loading.remove(), 700); }, 400);
+// The players' bodies load once (shared by every player), then the title comes up.
+loadHumanModel(e => { if (e.total) loading.textContent = `STREETCAGE · ${Math.round(100 * e.loaded / e.total)}%`; }).then(() => {
+  toTitle();
+  R.renderer.compile(R.scene, R.camera);
+  requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
+  setTimeout(() => { loading.style.opacity = 0; setTimeout(() => loading.remove(), 700); }, 400);
+}).catch(err => { console.error(err); loading.textContent = 'COULD NOT LOAD THE PLAYERS — CHECK YOUR CONNECTION AND RELOAD'; });
 window.__G = G;
 window.__prof = prof;
 window.__telemetry = makeTelemetry(() => G.match, rig);
 hud.setTelemetry(window.__telemetry, telemetryText);
 if (/[?&]profile\b/.test(location.search)) prof.enable();
-window.__R = R; window.__perf = perf;
+window.__R = R; window.__perf = perf; window.__THREE = THREE;
 window.__tick = (dt = 1 / 60, n = 1) => { G.manual = true; for (let i = 0; i < n; i++) tick(dt); };
 window.__auto = () => { G.manual = false; };

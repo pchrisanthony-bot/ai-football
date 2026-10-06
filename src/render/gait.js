@@ -31,7 +31,10 @@ const fwd = yaw => ({ x: Math.sin(yaw), z: Math.cos(yaw) });   // three.js yaw �
 const left = yaw => ({ x: Math.cos(yaw), z: -Math.sin(yaw) });
 
 export class Gait {
-  constructor() {
+  // ankle / ball: the ankle's height above the sole and the ankle → ball-of-foot distance
+  // (local units) — from the body model the gait drives.
+  constructor({ ankle = ANKLE, ball = BALL } = {}) {
+    this.ANKLE = ankle; this.BALL = ball;
     this.phase = 0;                 // cycle phase (0..1); the left foot lands at 0, the right at 0.5
     this.moving = false;
     this.feet = { L: null, R: null };
@@ -85,7 +88,7 @@ export class Gait {
         if (ft.state === 'plant' && ((u >= D && u < 0.98) || (ft.early && u > 0.5 * D))) {
           ft.early = false;
           const a = this.ankle(ft, s);
-          ft.state = 'swing'; ft.rx = a.x - x; ft.rz = a.z - z; ft.fh = a.y - ANKLE * s; ft.fp = ft.heel; ft.D = Math.min(D, u); ft.dur = 0; ft.s = 0;   // (an early push-off swings from where it is)
+          ft.state = 'swing'; ft.rx = a.x - x; ft.rz = a.z - z; ft.fh = a.y - this.ANKLE * s; ft.fp = ft.heel; ft.D = Math.min(D, u); ft.dur = 0; ft.s = 0;   // (an early push-off swings from where it is)
         }
         if (ft.state === 'swing') {
           if (ft.dur) {                          // a settle step still finishing: time-based
@@ -141,7 +144,7 @@ export class Gait {
           ft.heel *= Math.exp(-dt * 12);         // settle flat
           if (err > we) { we = err; worst = f; }
         }
-        if (worst && we > 0.2) { const ft = F[worst], a = this.ankle(ft, s); ft.state = 'swing'; ft.dur = 0.2; ft.fx = a.x; ft.fz = a.z; ft.fh = a.y - ANKLE * s; ft.fp = ft.heel; ft.s = 0; }
+        if (worst && we > 0.2) { const ft = F[worst], a = this.ankle(ft, s); ft.state = 'swing'; ft.dur = 0.2; ft.fx = a.x; ft.fz = a.z; ft.fh = a.y - this.ANKLE * s; ft.fp = ft.heel; ft.s = 0; }
       }
       this.stance = 1;
     }
@@ -149,7 +152,7 @@ export class Gait {
     for (const f of ['L', 'R']) {
       const ft = F[f];
       out[f] = ft.state === 'plant' ? { ...this.ankle(ft, s), pitch: ft.heel || 0, planted: true }
-        : { x: ft.x, y: ANKLE * s + (ft.h || 0), z: ft.z, pitch: ft.pitch || 0, planted: false, s: ft.s || 0 };
+        : { x: ft.x, y: this.ANKLE * s + (ft.h || 0), z: ft.z, pitch: ft.pitch || 0, planted: false, s: ft.s || 0 };
     }
     return out;
   }
@@ -158,7 +161,8 @@ export class Gait {
   // pivots on its ball, so the ankle rises and comes forward.
   ankle(ft, s) {
     const h = ft.heel || 0, d = fwd(ft.yaw);
-    const along = (BALL - BALL * Math.cos(h) + ANKLE * Math.sin(h)) * s, up = (ANKLE * Math.cos(h) + BALL * Math.sin(h)) * s;
+    const A = this.ANKLE, B = this.BALL;
+    const along = (B - B * Math.cos(h) + A * Math.sin(h)) * s, up = (A * Math.cos(h) + B * Math.sin(h)) * s;
     return { x: ft.x + d.x * along, y: up, z: ft.z + d.z * along };
   }
 

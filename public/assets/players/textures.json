@@ -1,0 +1,232 @@
+{
+ "skin_light": {
+  "diffuse": {
+   "file": "textures/skin_light_diffuse.webp",
+   "size": [
+    2048,
+    2048
+   ],
+   "alpha": false,
+   "bytes": 239744
+  }
+ },
+ "skin_olive": {
+  "diffuse": {
+   "file": "textures/skin_olive_diffuse.webp",
+   "size": [
+    2048,
+    2048
+   ],
+   "alpha": false,
+   "bytes": 205370
+  }
+ },
+ "skin_tan": {
+  "diffuse": {
+   "file": "textures/skin_tan_diffuse.webp",
+   "size": [
+    2048,
+    2048
+   ],
+   "alpha": false,
+   "bytes": 204112
+  }
+ },
+ "skin_dark": {
+  "diffuse": {
+   "file": "textures/skin_dark_diffuse.webp",
+   "size": [
+    2048,
+    2048
+   ],
+   "alpha": false,
+   "bytes": 130654
+  }
+ },
+ "eye_brown": {
+  "diffuse": {
+   "file": "textures/eye_brown_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 12138
+  }
+ },
+ "eye_brownlight": {
+  "diffuse": {
+   "file": "textures/eye_brownlight_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 16628
+  }
+ },
+ "eye_blue": {
+  "diffuse": {
+   "file": "textures/eye_blue_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 15412
+  }
+ },
+ "eye_green": {
+  "diffuse": {
+   "file": "textures/eye_green_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 13956
+  }
+ },
+ "eye_grey": {
+  "diffuse": {
+   "file": "textures/eye_grey_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 14194
+  }
+ },
+ "brows": {
+  "diffuse": {
+   "file": "textures/brows_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 32486
+  }
+ },
+ "lashes": {
+  "diffuse": {
+   "file": "textures/lashes_diffuse.webp",
+   "size": [
+    512,
+    512
+   ],
+   "alpha": true,
+   "bytes": 25788
+  }
+ },
+ "hair_short02": {
+  "diffuse": {
+   "file": "textures/hair_short02_diffuse.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": true,
+   "bytes": 145700
+  }
+ },
+ "hair_short04": {
+  "diffuse": {
+   "file": "textures/hair_short04_diffuse.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": true,
+   "bytes": 201126
+  }
+ },
+ "hair_afro01": {
+  "diffuse": {
+   "file": "textures/hair_afro01_diffuse.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": true,
+   "bytes": 454560
+  }
+ },
+ "hair_short01": {
+  "diffuse": {
+   "file": "textures/hair_short01_diffuse.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": true,
+   "bytes": 351980
+  }
+ },
+ "kit": {
+  "diffuse": {
+   "file": "textures/kit_diffuse.webp",
+   "size": [
+    2048,
+    2048
+   ],
+   "alpha": false,
+   "bytes": 232946
+  },
+  "normal": {
+   "file": "textures/kit_normal.webp",
+   "size": [
+    2048,
+    2048
+   ],
+   "alpha": false,
+   "bytes": 163506
+  },
+  "ao": {
+   "file": "textures/kit_ao.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": false,
+   "bytes": 19656
+  }
+ },
+ "boots": {
+  "diffuse": {
+   "file": "textures/boots_diffuse.webp",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": true,
+   "bytes": 146000
+  }
+ },
+ "kitMask": {
+  "diffuse": {
+   "file": "textures/kit_mask.png",
+   "size": [
+    1024,
+    1024
+   ],
+   "alpha": false,
+   "bytes": 44731
+  }
+ },
+ "kitLayout": {
+  "back": [
+   0.035,
+   0.03,
+   0.335,
+   0.37
+  ],
+  "front": [
+   0.405,
+   0.03,
+   0.665,
+   0.37
+  ]
+ }
+}

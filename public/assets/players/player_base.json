@@ -1,0 +1,29 @@
+{
+ "source": "MakeHuman system assets (CC0) via MPFB 2",
+ "height": 1.778895616531372,
+ "builds": [
+  "lean",
+  "strong",
+  "stocky"
+ ],
+ "hair": [
+  "short02",
+  "short04",
+  "afro01",
+  "short01"
+ ],
+ "shortsHem": 0.6,
+ "sockTop": 0.46,
+ "counts": {
+  "body": 9198,
+  "eyes": 1064,
+  "eyebrows": 124,
+  "eyelashes": 250,
+  "kit": 1300,
+  "boots": 1594,
+  "hair_short02": 1755,
+  "hair_short04": 865,
+  "hair_afro01": 2196,
+  "hair_short01": 2984
+ }
+}

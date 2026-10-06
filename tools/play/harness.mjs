@@ -33,8 +33,10 @@ export async function harness({ w = 1280, h = 720, touch = false, url = 'http://
   const errors = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 300)); });
   page.on('pageerror', e => errors.push('PAGEERROR ' + e.message.slice(0, 300)));
-  await page.goto(url + query, { waitUntil: 'networkidle0' });
-  await sleep(1200);
+  await page.goto(url + query, { waitUntil: 'networkidle0', timeout: 180000 });
+  // the players' bodies load first; the title (and __G.menu) comes up after
+  for (let i = 0; i < 200; i++) { if (await page.evaluate(() => !!(window.__G && window.__G.menu))) break; await sleep(100); }
+  await sleep(600);
   await page.mouse.click(4, h - 4);   // focus + audio unlock (a first tap on empty space)
   await sleep(150);
   const H = {
