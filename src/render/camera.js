@@ -69,7 +69,7 @@ export class CameraRig {
     this.dist += (want - this.dist) * (1 - Math.exp(-1.5 * dt));
     // High beyond the near touch line (FTS / broadcast Cam 1), looking across the play.
     this.cam.position.set(this.focus.x * C.xFollow, this.dist * C.rise + C.lift, PITCH.halfW * C.gantry + this.focus.z * C.zCam + this.dist * C.back + C.backOff);
-    this.lookAt.set(this.focus.x, 0.3, this.focus.z * C.lookZ + C.lookOff);
+    this.lookAt.set(this.focus.x, C.lookY ?? 0.3, this.focus.z * C.lookZ + C.lookOff);
     this.cam.fov = C.fov;
   }
 

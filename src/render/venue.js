@@ -7,14 +7,14 @@ import { buildStands, towerHead } from './stadium.js';
 
 // ------------------------------------------------------------------ ripple FX (fence + nets)
 // Up to 8 live impacts; vertices are pushed along the surface normal by a decaying ring wave.
-function makeRippleUniforms() {
+export function makeRippleUniforms() {
   return {
     uTime: { value: 0 },
     uImpacts: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -100, 0, -100)) },
     uStr: { value: new Array(8).fill(0) },
   };
 }
-function addRipple(mat, U, { freq = 9, speed = 26, falloff = 1.6, decay = 3.5, bulge = 0 } = {}) {
+export function addRipple(mat, U, { freq = 9, speed = 26, falloff = 1.6, decay = 3.5, bulge = 0 } = {}) {
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.vertexShader = sh.vertexShader
@@ -36,7 +36,7 @@ function addRipple(mat, U, { freq = 9, speed = 26, falloff = 1.6, decay = 3.5, b
   };
   mat.customProgramCacheKey = () => `ripple${freq}${speed}${bulge}`;
 }
-class Ripples {
+export class Ripples {
   constructor() { this.U = makeRippleUniforms(); this.i = 0; }
   hit(x, y, z, strength) {
     const k = this.i++ % 8;

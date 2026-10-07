@@ -1,0 +1,101 @@
+{
+ "people": [
+  {
+   "id": "man_tee",
+   "sex": "m",
+   "age": 0.55,
+   "height": 1.701,
+   "verts": 1517,
+   "tris": 2739
+  },
+  {
+   "id": "man_shirt",
+   "sex": "m",
+   "age": 0.66,
+   "height": 1.662,
+   "verts": 1309,
+   "tris": 2105
+  },
+  {
+   "id": "man_slim",
+   "sex": "m",
+   "age": 0.44,
+   "height": 1.7,
+   "verts": 2036,
+   "tris": 2548
+  },
+  {
+   "id": "old_man",
+   "sex": "m",
+   "age": 0.86,
+   "height": 1.614,
+   "verts": 1074,
+   "tris": 1949
+  },
+  {
+   "id": "worker",
+   "sex": "m",
+   "age": 0.6,
+   "height": 1.724,
+   "verts": 1432,
+   "tris": 2485
+  },
+  {
+   "id": "woman_kurta",
+   "sex": "f",
+   "age": 0.6,
+   "height": 1.515,
+   "verts": 2490,
+   "tris": 2807
+  },
+  {
+   "id": "woman_young",
+   "sex": "f",
+   "age": 0.45,
+   "height": 1.52,
+   "verts": 2014,
+   "tris": 2864
+  },
+  {
+   "id": "woman_older",
+   "sex": "f",
+   "age": 0.8,
+   "height": 1.446,
+   "verts": 1450,
+   "tris": 2315
+  },
+  {
+   "id": "boy",
+   "sex": "m",
+   "age": 0.19,
+   "height": 1.36,
+   "verts": 1587,
+   "tris": 2808
+  },
+  {
+   "id": "girl",
+   "sex": "f",
+   "age": 0.17,
+   "height": 1.207,
+   "verts": 1992,
+   "tris": 2783
+  },
+  {
+   "id": "teen",
+   "sex": "m",
+   "age": 0.28,
+   "height": 1.514,
+   "verts": 2229,
+   "tris": 2904
+  },
+  {
+   "id": "man_long",
+   "sex": "m",
+   "age": 0.5,
+   "height": 1.854,
+   "verts": 1201,
+   "tris": 2166
+  }
+ ],
+ "source": "MakeHuman system assets (CC0) via MPFB 2; tools/characters/build_crowd.py"
+}
