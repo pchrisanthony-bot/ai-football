@@ -212,26 +212,36 @@ export function concreteTexture() {
 }
 
 // ---------------------------------------------------------------- ball
+// A modern street ball, sharp at any distance: a 2048 × 1024 equirectangular map (u =
+// longitude, v = latitude) — bright white casing, three bold swoosh bands kept off the
+// poles (no pinching), the panel seams as meridians, and a small wordmark.
 export function ballTexture() {
   return once('ball', () => {
-    const W = 512, H = 256, c = canvas(W, H), g = c.getContext('2d');
-    g.fillStyle = '#f7f7f2'; g.fillRect(0, 0, W, H);
-    // bold street-ball panels (equirectangular-friendly swooshes)
-    const cols = ['#111111', '#FFD400', '#FF3B6B'];
-    for (let i = 0; i < 6; i++) {
-      g.fillStyle = cols[i % 3];
-      const cx = (i / 6) * W + 20, cy = i % 2 ? H * 0.32 : H * 0.68;
+    const W = 2048, H = 1024, c = canvas(W, H), g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+    // a faint warm shade toward the poles (a printed casing, not flat paint)
+    const sh = g.createLinearGradient(0, 0, 0, H);
+    sh.addColorStop(0, 'rgba(230,226,215,0.6)'); sh.addColorStop(0.25, 'rgba(255,255,255,0)'); sh.addColorStop(0.75, 'rgba(255,255,255,0)'); sh.addColorStop(1, 'rgba(230,226,215,0.6)');
+    g.fillStyle = sh; g.fillRect(0, 0, W, H);
+    // three swoosh bands, each wrapping the ball twice (seamless at u = 0 / 1)
+    const bands = [['#15151a', 0.33, 0.0], ['#FFD000', 0.5, 0.33], ['#FF2A5F', 0.67, 0.66]];
+    for (const [col, v0, ph] of bands) {
+      g.fillStyle = col;
       g.beginPath();
-      for (let k = 0; k < 5; k++) {
-        const a = (k / 5) * Math.PI * 2;
-        const px = cx + Math.cos(a) * 34, py = cy + Math.sin(a) * 30;
-        k ? g.lineTo(px, py) : g.moveTo(px, py);
-      }
+      const amp = H * 0.07, half = H * 0.055, N = 256;
+      for (let k = 0; k <= N; k++) { const u = k / N, y = v0 * H + Math.sin((u * 2 + ph) * Math.PI * 2) * amp - half * (0.55 + 0.45 * Math.cos((u * 4 + ph) * Math.PI * 2)); k ? g.lineTo(u * W, y) : g.moveTo(u * W, y); }
+      for (let k = N; k >= 0; k--) { const u = k / N, y = v0 * H + Math.sin((u * 2 + ph) * Math.PI * 2) * amp + half * (0.55 + 0.45 * Math.cos((u * 4 + ph) * Math.PI * 2)); g.lineTo(u * W, y); }
       g.closePath(); g.fill();
     }
-    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 2;
-    for (let i = 0; i < 8; i++) { g.beginPath(); g.moveTo((i / 8) * W, 0); g.lineTo((i / 8) * W + 40, H); g.stroke(); }
-    return tex(c, { aniso: 8 });
+    // panel seams: six meridians and two latitude seams, thin and soft
+    g.strokeStyle = 'rgba(40,40,48,0.35)'; g.lineWidth = 3;
+    for (let i = 0; i < 6; i++) { const x = (i / 6) * W + W / 12; g.beginPath(); g.moveTo(x, H * 0.08); g.bezierCurveTo(x + 40, H * 0.35, x - 40, H * 0.65, x, H * 0.92); g.stroke(); }
+    for (const v of [0.22, 0.78]) { g.beginPath(); g.moveTo(0, v * H); g.lineTo(W, v * H); g.stroke(); }
+    // wordmark, twice round the equator
+    g.font = `900 ${Math.round(H * 0.045)}px "Arial Black", Impact, sans-serif`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const u of [0.25, 0.75]) { g.fillStyle = 'rgba(20,20,26,0.85)'; g.fillText('STREETCAGE', u * W, H * 0.43); }
+    return tex(c, { aniso: 16 });
   });
 }
 

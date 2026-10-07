@@ -8,8 +8,21 @@ const TRAIL = 22;
 
 export class BallView {
   constructor(scene) {
+    // Sharp and bright: a smooth sphere, a glossy PU casing (clearcoat), and a little of its
+    // own colour as emissive so it stays bright under the floodlights and reads from the
+    // broadcast camera.
     const map = ballTexture();
-    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL.r, 28, 18), new THREE.MeshStandardMaterial({ map, roughness: 0.42, metalness: 0.02 }));
+    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL.r, 48, 32), new THREE.MeshPhysicalMaterial({
+      map, roughness: 0.36, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.2,
+      emissive: new THREE.Color(1, 1, 1), emissiveMap: map, emissiveIntensity: 0.1,
+    }));
+    // a soft rim so its outline reads against the dark court at night
+    this.mesh.material.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        { float rim = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0), 2.5);
+          totalEmissiveRadiance += vec3(1.0, 0.97, 0.9) * rim * 0.45; }`);
+    };
+    this.mesh.material.customProgramCacheKey = () => 'ball-rim';
     this.mesh.castShadow = true;
     scene.add(this.mesh);
     this.blob = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: radialTexture('rgba(0,0,0,0.75)', 'rgba(0,0,0,0)', 64), transparent: true, depthWrite: false }));
@@ -41,6 +54,10 @@ export class BallView {
 
   update(dt, b, camera) {
     this.mesh.position.set(b.x, b.y, b.z);
+    // Readability from the match camera: the ball is drawn up to 18% bigger as the camera
+    // pulls back (a few pixels across at 20+ m); true size up close. (Visual only.)
+    const cd = camera.position.distanceTo(this.mesh.position);
+    this.mesh.scale.setScalar(1 + 0.18 * Math.min(1, Math.max(0, (cd - 8) / 14)));
     // Spin: the free ball carries a real spin vector (backspin on a chip, topspin off
     // a bounce, curl on a finesse shot) — show exactly that. A ball held at the feet
     // just rolls with its motion.

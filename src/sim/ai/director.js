@@ -673,17 +673,7 @@ export class AIDirector {
     const gx = m.ownGoalX(p.team), dir = m.teams[p.team].dir;
     if (b.owner === p) {
       ai.state = 'DISTRIBUTE';
-      if (p.possessT > 0.9 && !p.action) {
-        const passes = evalPasses(m, p).filter(o => o.kind === 'pass' && o.risk < 0.35);
-        if (passes.length && passes[0].u > -0.4) {
-          if (b.inHands) m.requestKick(p, 'throw', { receiver: passes[0].r });
-          else m.requestKick(p, 'pass', { receiver: passes[0].r });
-          ai.pop = { text: 'DISTRIBUTE', t: 1 };
-        } else if (p.possessT > 1.8) {
-          m.requestKick(p, 'clear', { target: { x: dir * this.R.clear.x, z: (this.m.rand() - 0.5) * this.R.clear.z } });
-          ai.pop = { text: 'CLEAR', t: 1 };
-        }
-      }
+      if (p.possessT > 0.9 && !p.action) this.keeperDistribute(p, p.possessT > 1.8);
       ai.label = ai.state;
       return;
     }
@@ -699,6 +689,41 @@ export class AIDirector {
     }
     if (ai.state !== 'DIVE') ai.state = b.owner && b.owner.team !== p.team && Math.hypot(b.x - gx, b.z) < this.R.keeperSet ? 'SET' : 'POSITION';
     ai.label = ai.state;
+  }
+
+  // The keeper plays it out: a safe short ball to a team-mate if there is one; otherwise
+  // (force) long — to his best outlet up the pitch, not a random spot.
+  keeperDistribute(p, force = false) {
+    const m = this.m, b = m.ball, ai = p.ai;
+    const passes = evalPasses(m, p).filter(o => o.kind === 'pass' && o.risk < 0.35);
+    if (passes.length && passes[0].u > -0.4) {
+      if (b.inHands) m.requestKick(p, 'throw', { receiver: passes[0].r });
+      else m.requestKick(p, 'pass', { receiver: passes[0].r });
+      ai.pop = { text: 'DISTRIBUTE', t: 1 };
+      return true;
+    }
+    if (!force) return false;
+    const o = this.longOutlet(p);
+    m.requestKick(p, 'clear', { target: o.target, receiver: o.r });
+    ai.pop = { text: o.r ? 'LONG BALL' : 'CLEAR', t: 1 };
+    return true;
+  }
+
+  // His best long outlet: the team-mate up the pitch with the most room round where the
+  // ball would drop (and gaining the most ground); else the far half's open side.
+  longOutlet(p) {
+    const m = this.m, dir = m.teams[p.team].dir;
+    let best = null;
+    for (const r of m.mates(p)) {
+      if (r.line === 'GK') continue;
+      const lead = m.leadTarget(p, r, false);
+      let room = 99;
+      for (const o of m.opponents(p)) room = Math.min(room, Math.hypot(o.x - lead.x, o.z - lead.z));
+      const sc = clamp(room / 4, 0, 1.2) + (lead.x * dir + PITCH.halfL) / PITCH.length * 0.8;
+      if (!best || sc > best.sc) best = { r, target: lead, sc };
+    }
+    if (best) return best;
+    return { r: null, target: { x: dir * this.R.clear.x, z: 0 } };
   }
 
   keeperAct(p, dt) {

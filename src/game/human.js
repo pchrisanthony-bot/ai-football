@@ -5,6 +5,8 @@ import { maxSpeed } from '../sim/players.js';
 import { clampToField } from '../sim/pitch.js';
 import { clamp, rotateTowards, angleDiff } from '../util/math.js';
 
+const GK_AUTO = 5;          // s the keeper holds it for you before he plays it himself
+
 export class HumanController {
   constructor(match, team, input) {
     this.m = match; this.team = team; this.in = input;
@@ -57,6 +59,11 @@ export class HumanController {
     else {
       const sp = maxSpeed(p, sprint) * (mine ? 0.94 : 1) * (this.charge ? 0.8 : 1);
       p.move.x = st.x; p.move.z = st.z; p.move.speed = hasStick ? sp * Math.min(1, Math.hypot(st.x, st.z) * 1.2) : 0;
+      // just handed the keeper (he's caught it): the stick you were defending with isn't his walk
+      if (this.inherit && p.line === 'GK' && mine) {
+        if (!hasStick || Math.abs(angleDiff(this.inherit.ang, Math.atan2(st.z, st.x))) > FM.receiving.freshTurn) this.inherit = null;
+        else p.move.speed = 0;
+      }
     }
     // Street Ball Control with the ball, jockey without it.
     const ctl = inp.down('control');
@@ -73,6 +80,8 @@ export class HumanController {
     if (r) { if (p === r.taker && r.state === 'READY') this.restartInput(dt, st, hasStick); return; }
     if (m.phase !== 'play') return;
     this.receiveAssist(p, st, hasStick, sprint);
+    // The keeper with it and nothing chosen for a while: he plays it himself (no time-wasting).
+    if (p.line === 'GK' && mine && !this.charge && !p.action && p.possessT > GK_AUTO) m.ai.keeperDistribute(p, true);
     if (inp.pressed('gamebreaker')) m.activateGB(this.team);   // G / L3·R3 / the GB button
     const canUseBall = mine || (!b.owner && m.ballReachableSoon(p, 1.6));
 
@@ -176,6 +185,13 @@ export class HumanController {
   // gesture: how a touch button was released, e.g. SHOOT swiped 'up' = chip, 'down' = curl.
   fire(kind, power, flair, st, gesture = null) {
     const m = this.m, p = this.p;
+    // The keeper with the ball: PASS throws (or rolls) it to the man the stick picks; THROUGH,
+    // LOB and SHOOT kick it long — to the man the stick picks, or where it points.
+    if (p.line === 'GK' && m.ball.owner === p) {
+      const long = kind !== 'pass';
+      m.requestPass(p, st.x, st.z, long ? 'lob' : 'pass', power, false);
+      return;
+    }
     const side = gesture === 'left' || gesture === 'right';
     if (kind === 'shoot') {
       const chip = gesture === 'up';
@@ -246,7 +262,8 @@ export class HumanController {
     const m = this.m, b = m.ball, cur = this.p;
     if (this.charge) return;
     const o = b.owner;
-    if (o && o.team === this.team && o !== cur && o.line !== 'GK') { this.setHuman(o); return; }
+    // The man on the ball is yours — the keeper too, so you choose where his ball goes.
+    if (o && o.team === this.team && o !== cur) { this.setHuman(o); return; }
     if (m.phase === 'restart' && m.restart.state !== 'READY') return;   // no switching while a restart is set up
     if (b.passTo && b.passTo.team === this.team && b.passTo !== cur && b.passTo.line !== 'GK') { this.setHuman(b.passTo); return; }
     if (o && o.team === this.team) return;

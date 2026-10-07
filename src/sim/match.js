@@ -217,6 +217,8 @@ export class Match {
       if (knocking && p === own) this.steerToBall(p);
       if (!(a && ACTIONS[a.type].selfMove)) movePlayer(p, dt, lock);
       p.steer = null;
+      // ball in his hands: he can walk with it, inside his area only
+      if (p.line === 'GK' && own === p && this.ball.inHands) this.keepInArea(p);
     }
     separatePlayers(this.players);
     prof.add('players', t0);
@@ -661,6 +663,13 @@ export class Match {
     this.reception.touched(p);
     if (b.passTo !== p) b.passTo = null;
     this.emit({ type: 'chest', pid: p.id, x: b.x, y: b.y, z: b.z, head });
+  }
+
+  // A keeper holding the ball stays in his area (the arc round his goal).
+  keepInArea(p) {
+    const gx = this.ownGoalX(p.team), R = PITCH.boxR - 0.35;
+    const dx = p.x - gx, dz = p.z, d = Math.hypot(dx, dz);
+    if (d > R) { p.x = gx + dx / d * R; p.z = dz / d * R; const out = (p.vx * dx + p.vz * dz) / d; if (out > 0) { p.vx -= out * dx / d; p.vz -= out * dz / d; p.speed = Math.hypot(p.vx, p.vz); } }
   }
 
   nearestOpponent(p) {
@@ -1361,8 +1370,14 @@ export class Match {
     if (!mine && b.restartTaker === p) return false;
     if (!mine && !this.ballReachableSoon(p, type === 'volley' ? 1.6 : 1.0)) return false;
     if (b.inHands && mine) { type = type === 'shot' ? 'clear' : type === 'lob' ? 'clear' : 'throw'; }
-    if (type === 'clear' && !params.target) params.target = { x: this.oppGoalX(p.team) * 0.4, z: (this.rand() - 0.5) * PITCH.width * 0.55 };
-    if (type === 'throw' && params.receiver) params.target = { x: params.receiver.x, z: params.receiver.z };
+    // A keeper's ball: thrown to the man (into his run) or where he aims it; kicked long to
+    // the man, the spot he aims at, or (nothing chosen) his best outlet up the pitch.
+    if ((type === 'throw' || type === 'clear') && !params.target) {
+      const it = params.intent;
+      if (params.receiver) params.target = this.leadTarget(p, params.receiver, false);
+      else if (it && it.hasStick) params.target = clampToField(b.x + Math.cos(it.ang) * (type === 'throw' ? it.spaceDist : Math.max(14, it.spaceDist)), b.z + Math.sin(it.ang) * (type === 'throw' ? it.spaceDist : Math.max(14, it.spaceDist)), 1.5);
+      else if (type === 'clear') { const o = this.ai.longOutlet(p); params.target = o.target; params.receiver = params.receiver || o.r; }
+    }
     if (type === 'throw' && !params.target) return false;
     this.startAction(p, type, params);
     p.closeControl = false;
