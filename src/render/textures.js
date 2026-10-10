@@ -218,13 +218,14 @@ export function concreteTexture() {
 export function ballTexture() {
   return once('ball', () => {
     const W = 2048, H = 1024, c = canvas(W, H), g = c.getContext('2d');
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+    // hi-vis optic yellow: the one colour that isn't the court, a kit, a wall or a line
+    g.fillStyle = '#e9ff1f'; g.fillRect(0, 0, W, H);
     // a faint warm shade toward the poles (a printed casing, not flat paint)
     const sh = g.createLinearGradient(0, 0, 0, H);
-    sh.addColorStop(0, 'rgba(230,226,215,0.6)'); sh.addColorStop(0.25, 'rgba(255,255,255,0)'); sh.addColorStop(0.75, 'rgba(255,255,255,0)'); sh.addColorStop(1, 'rgba(230,226,215,0.6)');
+    sh.addColorStop(0, 'rgba(255,255,255,0.75)'); sh.addColorStop(0.25, 'rgba(255,255,255,0)'); sh.addColorStop(0.75, 'rgba(255,255,255,0)'); sh.addColorStop(1, 'rgba(255,255,255,0.75)');
     g.fillStyle = sh; g.fillRect(0, 0, W, H);
     // three swoosh bands, each wrapping the ball twice (seamless at u = 0 / 1)
-    const bands = [['#15151a', 0.33, 0.0], ['#FFD000', 0.5, 0.33], ['#FF2A5F', 0.67, 0.66]];
+    const bands = [['#15151a', 0.33, 0.0], ['#ffffff', 0.5, 0.33], ['#FF2A8A', 0.67, 0.66]];
     for (const [col, v0, ph] of bands) {
       g.fillStyle = col;
       g.beginPath();

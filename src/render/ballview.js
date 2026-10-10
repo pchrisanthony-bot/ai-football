@@ -14,13 +14,13 @@ export class BallView {
     const map = ballTexture();
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(BALL.r, 48, 32), new THREE.MeshPhysicalMaterial({
       map, roughness: 0.36, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.2,
-      emissive: new THREE.Color(1, 1, 1), emissiveMap: map, emissiveIntensity: 0.1,
+      emissive: new THREE.Color(1, 1, 1), emissiveMap: map, emissiveIntensity: 0.32,
     }));
     // a soft rim so its outline reads against the dark court at night
     this.mesh.material.onBeforeCompile = (sh) => {
       sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         { float rim = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0), 2.5);
-          totalEmissiveRadiance += vec3(1.0, 0.97, 0.9) * rim * 0.45; }`);
+          totalEmissiveRadiance += vec3(0.95, 1.0, 0.55) * rim * 0.6; }`);
     };
     this.mesh.material.customProgramCacheKey = () => 'ball-rim';
     this.mesh.castShadow = true;
@@ -54,10 +54,12 @@ export class BallView {
 
   update(dt, b, camera) {
     this.mesh.position.set(b.x, b.y, b.z);
-    // Readability from the match camera: the ball is drawn up to 18% bigger as the camera
-    // pulls back (a few pixels across at 20+ m); true size up close. (Visual only.)
+    // Readability from the match camera: the ball is drawn 12% bigger up close, up to 40%
+    // as the camera pulls back (a few pixels across at 20+ m). (Visual only: physics unchanged.)
     const cd = camera.position.distanceTo(this.mesh.position);
-    this.mesh.scale.setScalar(1 + 0.18 * Math.min(1, Math.max(0, (cd - 8) / 14)));
+    const k = 1.12 + 0.28 * Math.min(1, Math.max(0, (cd - 8) / 14));
+    this.mesh.scale.setScalar(k);
+    this.mesh.position.y = b.y + (k - 1) * BALL.r;          // (still resting on the ground, not sunk into it)
     // Spin: the free ball carries a real spin vector (backspin on a chip, topspin off
     // a bounce, curl on a finesse shot) — show exactly that. A ball held at the feet
     // just rolls with its motion.
